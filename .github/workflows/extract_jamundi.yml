@@ -1,0 +1,58 @@
+name: "Jamundí Data Extraction"
+
+on:
+  schedule:
+    # Run every Monday at 8:00 AM UTC
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+    # Allow manual triggers
+    inputs:
+      full:
+        description: 'Run full extraction'
+        required: True
+        default: 'true'
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Run Extraction Pipeline
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+          OBS_HEADLESS: "True"
+          LOG_LEVEL: "INFO"
+        run: |
+          python -m src.pipelines.run_full_extract --full
+
+      - name: Upload Extracted Data
+        uses: actions/upload-artifact@v4
+        with:
+          name: jamundi-extracted-data
+          path: data/final/
+          retention-days: 7
+
+      - name: Upload Logs and Errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extraction-logs
+          path: |
+            logs/
+            data/raw/
+          retention-days: 3
