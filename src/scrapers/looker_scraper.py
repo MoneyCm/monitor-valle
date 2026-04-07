@@ -21,7 +21,6 @@ class LookerStudioScraper:
         if "google" in request.url:
             post_data = None
             try:
-                # Safely try to get post_data as text, fallback to placeholder if binary/gzipped
                 if request.post_data:
                     post_data = request.post_data
             except Exception:
@@ -34,52 +33,43 @@ class LookerStudioScraper:
                 "post_data": post_data
             })
 
-    async def _get_looker_frame(self):
-        """Finds the Looker Studio iframe within the page."""
-        # Try multiple times since frames load dynamically
-        for _ in range(5):
-            for frame in self.page.frames:
-                if "google.com/embed/reporting" in frame.url:
-                    return frame
-            await asyncio.sleep(2)
-        return None
-
     async def trigger_export(self) -> Optional[Path]:
-        """Automates the '3-dots -> Export -> CSV' flow in the Looker Studio iframe."""
+        """Automates the '3-dots -> Export -> CSV' flow using Frame Locator for cross-origin resilience."""
         logger.info("Attempting to trigger CSV Export from Looker Studio UI...")
         
-        frame = await self._get_looker_frame()
-        if not frame:
-            logger.error("Looker Studio iframe not found after waiting.")
-            return None
-
+        # 1. Use Frame Locator to target the Looker Studio iframe (cross-origin safe)
+        looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
+        
         try:
-            # 1. Wait for visualization container to be visible (Increades timeout to 30s)
-            logger.debug("Waiting for visualization container...")
-            viz_selector = ".visualization-container, .tool-container, g.canvas"
-            await frame.wait_for_selector(viz_selector, timeout=30000)
+            # 2. Wait for the report to load common elements (Increased to 45s)
+            logger.debug("Waiting for Looker Studio report content...")
+            await looker_frame.locator('text="Casos por Año y Mes"').wait_for(state="visible", timeout=45000)
             
-            # 2. Hover over the table to reveal the menu button
-            await frame.hover(viz_selector)
+            # 3. Identify and hover the specific table to reveal its 'More' button
+            # We use a locator that includes the table title to be precise
+            table_container = looker_frame.locator('div:has-text("Casos por Año y Mes")').last
+            await table_container.hover()
             await asyncio.sleep(2)
             
-            # 3. Click the three dots (menu-button)
-            # Looker often uses aria-label="More options" or similar
-            menu_selector = "button[aria-label*='Más'], button[aria-label*='More'], .flyout-menu-button"
-            await frame.click(menu_selector, timeout=10000)
-            logger.debug("Table menu opened.")
-            await asyncio.sleep(1)
+            # 4. Find the 'More Options' (3 dots) button within that table's context
+            # Looker often uses aria-label="Más opciones" or "More options"
+            menu_btn = looker_frame.locator('button[aria-label*="opciones"], button[aria-label*="options"], .flyout-menu-button').first
+            await menu_btn.click(timeout=10000)
+            logger.debug("Table context menu opened.")
+            await asyncio.sleep(2)
             
-            # 4. Click 'Exportar' or 'Export'
-            export_selector = "text='Exportar', text='Export'"
-            await frame.click(export_selector, timeout=5000)
-            logger.debug("Export dialog opened.")
-            await asyncio.sleep(1)
+            # 5. Select 'Exportar' from the dropdown
+            # We use 'text' filter to find the menu item
+            export_item = looker_frame.locator('text="Exportar", text="Export"').first
+            await export_item.click(timeout=5000)
+            logger.debug("Export dialog triggered.")
+            await asyncio.sleep(2)
             
-            # 5. In the dialog, ensure CSV is selected and click the final EXPORTAR button
+            # 6. Final confirmation in the Looker dialog (This is usually a global dialog in the frame)
+            # We must wait for the download to start
             async with self.page.expect_download(timeout=60000) as download_info:
-                # Final button in the export dialog
-                await self.page.click("button:has-text('EXPORTAR'), button:has-text('EXPORT')", timeout=10000)
+                # Target the 'EXPORTAR' button in the popup dialog
+                await looker_frame.locator('button:has-text("EXPORTAR"), button:has-text("EXPORT")').click(timeout=10000)
             
             download = await download_info.value
             save_path = self.settings.raw_dir / f"looker_export_jamundi_{download.suggested_filename}"
@@ -90,25 +80,24 @@ class LookerStudioScraper:
             return save_path
             
         except Exception as e:
-            logger.warning(f"UI export interaction failed: {str(e)}. Portal may be slow or layout changed.")
-            # Take screenshot of the failure for debugging
-            await self.page.screenshot(path=str(self.settings.logs_dir / "export_failure_ui.png"))
+            logger.warning(f"UI export interaction failed: {str(e)}.")
+            # Screenshot of the failure
+            await self.page.screenshot(path=str(self.settings.logs_dir / "export_failure_report.png"))
             return None
 
     async def extract_dashboard_data(self) -> Dict[str, Any]:
         """Main entry point for Looker data extraction."""
         logger.info(f"Navigating to dashboard: {self.settings.obs_alcalde_url}")
         
-        # Attach tracing
         self.page.on("request", self._handle_request)
         
         await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout)
         await self.page.wait_for_load_state("networkidle")
         
-        # Extended wait for Looker iframes to initialize
-        await asyncio.sleep(10)
+        # Initial wait for JS boot inside the portal
+        await asyncio.sleep(15)
         
-        # Save discovered requests for debugging
+        # Discovery info
         save_json(self.captured_requests, self.settings.raw_dir / "captured_requests.json")
         
         # Try direct export
