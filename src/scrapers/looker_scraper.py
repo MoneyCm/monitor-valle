@@ -34,42 +34,41 @@ class LookerStudioScraper:
             })
 
     async def trigger_export(self) -> Optional[Path]:
-        """Automates the '3-dots -> Export -> CSV' flow using Frame Locator for cross-origin resilience."""
+        """Automates the '3-dots -> Export -> CSV' flow using Frame Locator with strict mode fixes."""
         logger.info("Attempting to trigger CSV Export from Looker Studio UI...")
         
         # 1. Use Frame Locator to target the Looker Studio iframe (cross-origin safe)
         looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
         
         try:
-            # 2. Wait for the report to load common elements (Increased to 45s)
-            logger.debug("Waiting for Looker Studio report content...")
-            await looker_frame.locator('text="Casos por Año y Mes"').wait_for(state="visible", timeout=45000)
+            # 2. Fix 'Strict Mode Violation': Target only the HEADING for the table title
+            # This identifies the specific table container reliably.
+            logger.debug("Waiting for specific table heading...")
+            table_heading = looker_frame.get_by_role("heading", name="Casos por Año y Mes").first
+            await table_heading.wait_for(state="visible", timeout=45000)
             
-            # 3. Identify and hover the specific table to reveal its 'More' button
-            # We use a locator that includes the table title to be precise
-            table_container = looker_frame.locator('div:has-text("Casos por Año y Mes")').last
-            await table_container.hover()
+            # 3. Identify and hover the specific table container
+            # We look for the main visualization container containing our heading
+            await table_heading.hover()
             await asyncio.sleep(2)
             
-            # 4. Find the 'More Options' (3 dots) button within that table's context
-            # Looker often uses aria-label="Más opciones" or "More options"
+            # 4. Find the 'More Options' (3 dots) button
+            # We look for buttons with specific labels, taking only the first match to avoid strict mode errors
             menu_btn = looker_frame.locator('button[aria-label*="opciones"], button[aria-label*="options"], .flyout-menu-button').first
             await menu_btn.click(timeout=10000)
             logger.debug("Table context menu opened.")
             await asyncio.sleep(2)
             
             # 5. Select 'Exportar' from the dropdown
-            # We use 'text' filter to find the menu item
             export_item = looker_frame.locator('text="Exportar", text="Export"').first
             await export_item.click(timeout=5000)
             logger.debug("Export dialog triggered.")
             await asyncio.sleep(2)
             
-            # 6. Final confirmation in the Looker dialog (This is usually a global dialog in the frame)
-            # We must wait for the download to start
+            # 6. Final confirmation in the Looker dialog
             async with self.page.expect_download(timeout=60000) as download_info:
-                # Target the 'EXPORTAR' button in the popup dialog
-                await looker_frame.locator('button:has-text("EXPORTAR"), button:has-text("EXPORT")').click(timeout=10000)
+                # Target the 'EXPORTAR' button in the popup dialog (which is also inside the frame)
+                await looker_frame.locator('button:has-text("EXPORTAR"), button:has-text("EXPORT")').last.click(timeout=10000)
             
             download = await download_info.value
             save_path = self.settings.raw_dir / f"looker_export_jamundi_{download.suggested_filename}"
@@ -94,7 +93,7 @@ class LookerStudioScraper:
         await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout)
         await self.page.wait_for_load_state("networkidle")
         
-        # Initial wait for JS boot inside the portal
+        # Extended wait for JS boot
         await asyncio.sleep(15)
         
         # Discovery info
