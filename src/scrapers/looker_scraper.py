@@ -1,106 +1,101 @@
 import json
 import asyncio
+from pathlib import Path
 from typing import List, Dict, Any, Optional
-from playwright.async_api import Page, Response, Request
+from playwright.async_api import Page, Response, Request, expect
 from src.core.config import settings
 from src.core.logging_config import logger
 from src.core.utils import save_json
 
 class LookerStudioScraper:
-    """Extracts data from the embedded Looker Studio dashboard via request interception."""
+    """Extracts analytical data from Looker Studio using direct Export interaction and XHR interception."""
     
     def __init__(self, page: Page):
         self.page = page
         self.settings = settings
-        self.captured_data: List[Dict[str, Any]] = []
+        self.captured_requests: List[Dict[str, Any]] = []
+        self.exported_files: List[Path] = []
 
-    async def _handle_response(self, response: Response):
-        """Intercepts XHR/Fetch calls from Looker Studio to catch 'getData' payloads."""
-        if "google.com/embed/reporting" in response.url and "/getData" in response.url:
-            logger.debug(f"Intercepted getData response: {response.url}")
-            try:
-                # Looker Studio data is usually in a binary/protobuf-like or structured JSON format.
-                # If it's JSON, parsing is easy.
-                payload = await response.json()
-                self.captured_data.append({
-                    "url": response.url,
-                    "payload": payload,
-                    "timestamp": asyncio.get_event_loop().time()
-                })
-            except Exception as e:
-                logger.trace(f"Failed to parse JSON from Looker request: {response.url} - {str(e)}")
+    async def _handle_request(self, request: Request):
+        """Intercepts all requests for discovery/tracing."""
+        if "google" in request.url:
+            self.captured_requests.append({
+                "url": request.url,
+                "method": request.method,
+                "headers": dict(request.headers),
+                "post_data": request.post_data
+            })
 
-    async def _interact_with_filter(self, filter_name: str, option_name: str):
-        """Attempts to find and select a value in a Looker Studio filter dropdown."""
-        # Looker dropdowns often have 'aria-label' or title with the filter name
-        logger.info(f"Targeting filter '{filter_name}' to select '{option_name}'...")
+    async def _get_looker_frame(self):
+        """Finds the Looker Studio iframe within the page."""
+        for frame in self.page.frames:
+            if "google.com/embed/reporting" in frame.url:
+                return frame
+        return None
+
+    async def trigger_export(self) -> Optional[Path]:
+        """Automates the '3-dots -> Export -> CSV' flow in the Looker Studio iframe."""
+        logger.info("Attempting to trigger CSV Export from Looker Studio...")
         
-        # Looker often uses <iframe> or shadow DOMs. We focus on the iframe.
-        frames = self.page.frames
-        looker_frame = None
-        for f in frames:
-            if "google.com/embed/reporting" in f.url:
-                looker_frame = f
-                break
-        
-        if not looker_frame:
-            logger.warning("Looker Studio iframe not found. Skipping interaction.")
-            return
+        frame = await self._get_looker_frame()
+        if not frame:
+            logger.error("Looker Studio iframe not found.")
+            return None
 
         try:
-            # Looker Studio filters are often nested div/span with the label text
-            # This is a heuristic approach since Looker DOM is extremely complex.
-            # 1. Look for the filter dropdown by its label text
-            filter_selector = f"text='{filter_name}'"
-            await looker_frame.click(filter_selector, timeout=5000)
+            # 1. Hover over the table to reveal the menu button (three dots)
+            # We target a common container for Looker charts
+            await frame.hover(".visualization-container", timeout=10000)
+            
+            # 2. Click the three dots (menu-button)
+            # Looker often uses aria-label="More" or specific icons
+            menu_selector = "button[aria-label*='Más'], button[aria-label*='More'], .flyout-menu-button"
+            await frame.click(menu_selector, timeout=5000)
             await asyncio.sleep(1)
             
-            # 2. Look for the option in the opened dropdown
-            option_selector = f"text='{option_name}'"
-            await looker_frame.click(option_selector, timeout=5000)
-            logger.info(f"Successfully selected {option_name} in {filter_name}")
+            # 3. Click 'Exportar' or 'Export'
+            export_selector = "text='Exportar', text='Export'"
+            await frame.click(export_selector, timeout=5000)
+            await asyncio.sleep(1)
             
-            # 3. Close the dropdown if needed (usually clicking outside or the same filter)
-            await looker_frame.click(filter_selector)
+            # 4. In the dialog, ensure CSV is selected and click the final EXPORTAR button
+            # This triggers a browser download
+            async with self.page.expect_download() as download_info:
+                await self.page.click("button:has-text('EXPORTAR'), button:has-text('EXPORT')", timeout=5000)
+            
+            download = await download_info.value
+            save_path = self.settings.raw_dir / f"looker_export_jamundi_{download.suggested_filename}"
+            await download.save_as(save_path)
+            
+            logger.success(f"Looker data exported successfully to {save_path}")
+            self.exported_files.append(save_path)
+            return save_path
+            
         except Exception as e:
-            logger.debug(f"Could not interact with filter {filter_name} via standard text: {str(e)}")
+            logger.warning(f"Failed to trigger UI export: {str(e)}. Falling back to XHR interception.")
+            # Fallback handled by the listener attached in extract_dashboard_data
+            return None
 
-    async def apply_standard_filters(self):
-        """Standard interaction to ensure Jamundí is selected and trigger data loads."""
-        # This is a best-effort attempt as Looker DOM might change.
-        # User requested specific filters: Municipio, Año, Delito.
-        await self._interact_with_filter("Municipio", "Jamundí")
-        # We can add more defaults here if needed (e.g. Current Year)
-        await asyncio.sleep(2)
-
-    async def extract_dashboard_data(self) -> List[Dict[str, Any]]:
-        """Navigates to the dashboard, interacts if necessary, and captures data."""
+    async def extract_dashboard_data(self) -> Dict[str, Any]:
+        """Main entry point for Looker data extraction."""
         logger.info(f"Navigating to dashboard: {self.settings.obs_alcalde_url}")
         
-        # Attach interceptor
-        self.page.on("response", self._handle_response)
+        # Attach tracing
+        self.page.on("request", self._handle_request)
         
-        # Navigate and wait for Looker Studio to load
         await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout)
         await self.page.wait_for_load_state("networkidle")
         
-        logger.info("Looker dashboard loaded. Attempting to apply filters...")
-        await self.apply_standard_filters()
+        # Give it a moment to load the iframe content
+        await asyncio.sleep(5)
         
-        # Often, we need to click or scroll to trigger more data loads
-        logger.info("Filters applied. Waiting for iframe data...")
-        await asyncio.sleep(5)  # Give it some time to fetch initial/filtered data
+        # Save discovered requests for debugging/compliance
+        save_json(self.captured_requests, self.settings.raw_dir / "captured_requests.json")
         
-        # Capture raw data
-        if not self.captured_data:
-            logger.warning("No data captured via interceptor yet. Trying scroll...")
-            await self.page.mouse.wheel(0, 500)
-            await asyncio.sleep(5)
-            
-        # Log and save raw data for later parsing
-        logger.info(f"Captured {len(self.captured_data)} raw data packets from Looker Studio.")
+        # Try direct export first (Cleanest data)
+        csv_path = await self.trigger_export()
         
-        # Save a sample to raw directory for debugging
-        save_json(self.captured_data, self.settings.raw_dir / "looker_raw_capture.json")
-        
-        return self.captured_data
+        return {
+            "csv_path": str(csv_path) if csv_path else None,
+            "requests_count": len(self.captured_requests)
+        }
