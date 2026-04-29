@@ -40,6 +40,10 @@ jobs:
         run: |
           python -m src.pipelines.run_full_extract --full
 
+      - name: Generate PDF Report
+        run: |
+          python -m src.reporting.generate_pdf_report
+
       - name: Upload Extracted Data
         uses: actions/upload-artifact@v4
         with:

@@ -30,7 +30,7 @@ def load_json(path: Union[str, Path]) -> Union[Dict, List]:
 def generate_record_hash(record: Dict[str, Any], keys_to_ignore: List[str] = None) -> str:
     """Generates a SHA-256 hash for a record based on its values to help with deduplication."""
     if keys_to_ignore is None:
-        keys_to_ignore = ["fecha_extraccion", "hash_registro", "url_origen"]
+        keys_to_ignore = ["fecha_extraccion", "hash_registro", "url_origen", "metodo_extraccion"]
     
     # Sort keys to ensure consistent hashing
     record_copy = {k: str(v) for k, v in record.items() if k not in keys_to_ignore}
