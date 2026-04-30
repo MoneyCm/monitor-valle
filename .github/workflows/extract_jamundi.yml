@@ -52,7 +52,7 @@ jobs:
           python -m src.reporting.check_changes
 
       - name: Send Email Report
-        if: env.DATA_CHANGED == 'true'
+        if: env.DATA_CHANGED == 'true' || github.event_name == 'schedule'
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
