@@ -113,14 +113,27 @@ class JamundiBoletinReporter:
 
         # PAGE 1: PORTADA
         pdf.add_page()
-        if self.banner_path and self.banner_path.exists(): pdf.image(str(self.banner_path), x=10, y=10, w=190)
-        pdf.set_y(60); pdf.set_font("Helvetica", "B", 20); pdf.set_text_color(*self.primary_color)
+        if self.banner_path and self.banner_path.exists(): pdf.image(str(self.banner_path), x=93.125, y=10, w=23.75)
+        pdf.set_y(50); pdf.set_font("Helvetica", "B", 20); pdf.set_text_color(*self.primary_color)
         pdf.cell(0, 15, "BOLETIN SEMANAL DE SEGURIDAD Y CONVIVENCIA", align='C', new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", "B", 16); pdf.cell(0, 10, "Municipio de Jamundi (Valle del Cauca)", align='C', new_x="LMARGIN", new_y="NEXT")
         pdf.ln(10); pdf.set_fill_color(245, 245, 245); pdf.set_font("Helvetica", "B", 11); pdf.set_text_color(0, 0, 0)
-        ficha = [["Semana Analizada:", f"Semana {self.current_week}"], ["Fecha de Corte:", datetime.datetime.now().strftime('%d/%m/%Y')], ["Dependencia:", "Observatorio del Delito"], ["Fuentes:", "Intercepcion Looker Studio / Siedco"]]
+        # Get max date from dataset
+        date_mask = df['col_0'].astype(str).str.match(r'\d{4}-\d{2}-\d{2}', na=False)
+        if date_mask.any():
+            ultimo_registro = pd.to_datetime(df.loc[date_mask, 'col_0']).max().strftime('%d/%m/%Y')
+        else:
+            ultimo_registro = "N/A"
+
+        ficha = [
+            ["Semana Analizada:", f"Semana {self.current_week}"], 
+            ["Fecha de Corte:", datetime.datetime.now().strftime('%d/%m/%Y')],
+            ["Último Registro:", ultimo_registro],
+            ["Dependencia:", "Observatorio del Delito"], 
+            ["Fuentes:", "Intercepcion Looker Studio / Siedco"]
+        ]
         for r in ficha:
-            pdf.cell(60, 10, r[0], border=1, fill=True); pdf.cell(130, 10, r[1], border=1); pdf.ln()
+            pdf.cell(60, 10, self._safe_text(r[0]), border=1, fill=True); pdf.cell(130, 10, self._safe_text(r[1]), border=1); pdf.ln()
         
         # RESUMEN
         pdf.ln(10); pdf.set_font("Helvetica", "B", 14); pdf.set_text_color(*self.primary_color)
