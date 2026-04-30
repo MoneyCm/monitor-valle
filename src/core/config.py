@@ -6,8 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Credentials
-    obs_user: str = Field(..., alias="OBS_USER")
-    obs_password: str = Field(..., alias="OBS_PASSWORD")
+    obs_user: Optional[str] = Field(None, alias="OBS_USER")
+    obs_password: Optional[str] = Field(None, alias="OBS_PASSWORD")
 
     # Platform Settings
     obs_url: str = "https://www.observatoriodeldelitovalle.co"
