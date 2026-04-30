@@ -23,10 +23,9 @@ def send_report_email():
 Se ha detectado una actualización en la información de seguridad de Jamundí en el observatorio.
 Adjunto encontrarás el boletín semanal generado automáticamente con los nuevos datos consolidados.
 
-Este es un mensaje automático del pipeline de Monitor Valle.
-
 Saludos,
-Monitor Valle Bot""")
+César Alfonso Forero Molano
+Profesional Universitario II de la Secretaria de seguridad y convivencia""")
 
     pdf_path = Path("data/final/boletin_semanal_jamundi.pdf")
     if pdf_path.exists():
