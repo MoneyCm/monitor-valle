@@ -22,6 +22,7 @@ jobs:
       OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
       OBS_HEADLESS: "True"
       LOG_LEVEL: "INFO"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     
     steps:
       - name: Checkout Code
