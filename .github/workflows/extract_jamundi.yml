@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      OBS_USER: ${{ secrets.OBS_USER }}
+      OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+      OBS_HEADLESS: "True"
+      LOG_LEVEL: "INFO"
     
     steps:
       - name: Checkout Code
@@ -34,11 +39,6 @@ jobs:
           playwright install chromium
 
       - name: Run Extraction Pipeline
-        env:
-          OBS_USER: ${{ secrets.OBS_USER }}
-          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
-          OBS_HEADLESS: "True"
-          LOG_LEVEL: "INFO"
         run: |
           python -m src.pipelines.run_full_extract --full
 
