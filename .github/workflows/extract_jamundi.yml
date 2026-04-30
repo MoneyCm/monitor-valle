@@ -15,6 +15,8 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout Code
@@ -43,6 +45,28 @@ jobs:
       - name: Generate PDF Report
         run: |
           python -m src.reporting.generate_pdf_report
+
+      - name: Check for Data Updates
+        run: |
+          python -m src.reporting.check_changes
+
+      - name: Send Email Report
+        if: env.DATA_CHANGED == 'true'
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+        run: |
+          python -m src.reporting.send_email
+
+      - name: Commit New Data Hash
+        if: env.DATA_CHANGED == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/data_hash.txt
+          git commit -m "Actualizando hash de datos detectados [skip ci]" || echo "No changes to commit"
+          git push
 
       - name: Upload Extracted Data
         uses: actions/upload-artifact@v4
