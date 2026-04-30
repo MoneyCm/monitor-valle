@@ -25,7 +25,8 @@ Adjunto encontrarás el boletín semanal generado automáticamente con los nuevo
 
 Saludos,
 César Alfonso Forero Molano
-Profesional Universitario II de la Secretaria de seguridad y convivencia""")
+Profesional Universitario II
+Secretaria de Seguridad y Convivencia""")
 
     pdf_path = Path("data/final/boletin_semanal_jamundi.pdf")
     if pdf_path.exists():
