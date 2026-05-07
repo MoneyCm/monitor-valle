@@ -87,11 +87,8 @@ class JamundiBoletinReporter:
                 v_2025 = rows[rows['col_9'] == '2025']['col_1'].iloc[0] if not rows[rows['col_9'] == '2025'].empty else 0
                 v_2026 = rows[rows['col_9'] == '2026']['col_1'].iloc[0] if not rows[rows['col_9'] == '2026'].empty else 0
 
-                # If we don't have year-specific data, fallback to min/max heuristic
-                if v_2025 == 0 and v_2026 == 0:
-                    vals = rows['col_1'].tolist()
-                    v_2026 = max(vals)
-                    v_2025 = min(vals) if len(vals) > 1 else 0
+                # Removed the min/max heuristic that was causing historical maximums 
+                # to be incorrectly assigned to 2026 when extraction timed out.
 
                 label = d
                 # Heuristic for label (Historical if too high)

@@ -214,12 +214,12 @@ class LookerStudioScraper:
                 # We use a more flexible item selector
                 target_year = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"], .item-label').filter(has_text=year).first
                 
-                if not await target_year.is_visible(timeout=5000):
+                if not await target_year.is_visible(timeout=15000):
                     logger.warning(f"Year {year} not found in specific classes, trying generic text...")
                     target_year = looker_frame.get_by_text(year, exact=True).first
                 
                 # Ensure it's in view before clicking
-                if await target_year.is_visible(timeout=5000):
+                if await target_year.is_visible(timeout=15000):
                     await target_year.click(force=True, timeout=10000)
                 else:
                     logger.warning(f"Year {year} could not be found to click. Moving to next.")
