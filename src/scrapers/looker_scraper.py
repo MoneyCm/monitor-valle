@@ -144,44 +144,43 @@ class LookerStudioScraper:
         looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
 
         # PHASE 2: Ensure Municipality filter is set to Jamundí
-        logger.info(f"Setting Municipality filter specifically to: {self.settings.obs_municipio}...")
-        """
-        try:
-            # 1. Open the filter (Using the proven selector from previous versions)
-            municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
-            
-            await municipio_trigger.hover()
-            await asyncio.sleep(1)
-            await municipio_trigger.click(force=True)
-            await asyncio.sleep(3)
+        logger.info(f"Skipping Municipality filter interaction as Alcalde dashboard is pre-filtered for {self.settings.obs_municipio}.")
+        # try:
+        # # 1. Open the filter (Using the proven selector from previous versions)
+        # municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
+        
+        # await municipio_trigger.hover()
+        # await asyncio.sleep(1)
+        # await municipio_trigger.click(force=True)
+        # await asyncio.sleep(3)
+        
+        # # 2. Search for Jamundí in the filter's internal search box if it exists
+        # search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
+        # if await search_box.is_visible(timeout=3000):
+        # await search_box.fill("Jamund")
+        # await asyncio.sleep(2)
 
-            # 2. Search for Jamundí in the filter's internal search box if it exists
-            search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
-            if await search_box.is_visible(timeout=3000):
-                await search_box.fill("Jamund")
-                await asyncio.sleep(2)
+        # # 3. Use 'Only' (Solo) to select only Jamundí if available, or just click it
+        # # Looker Studio often has a 'Solo' link on hover
+        # jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
+        # await jamundi_option.hover()
+        # await asyncio.sleep(1)
 
-            # 3. Use 'Only' (Solo) to select only Jamundí if available, or just click it
-            # Looker Studio often has a 'Solo' link on hover
-            jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
-            await jamundi_option.hover()
-            await asyncio.sleep(1)
-            
-            # Click 'Solamente' or 'Only' instead of toggling the checkbox off!
-            only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
-            if await only_button.is_visible(timeout=3000):
-                await only_button.click(force=True)
-            else:
-                # If 'Solamente' is not found, it's safer to clear all first, then check Jamundí
-                # but 'Solamente' should be there on hover in Google Looker Studio.
-                await jamundi_option.click(force=True)
-            
-            logger.success(f"Municipality {self.settings.obs_municipio} selected.")
-            
-            await self.page.keyboard.press("Escape")
-            await asyncio.sleep(5)
-        except Exception as e:
-            logger.warning(f"Municipality filter selection issue (might be fixed label): {str(e)}")
+        # # Click 'Solamente' or 'Only' instead of toggling the checkbox off!
+        # only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
+        # if await only_button.is_visible(timeout=3000):
+        # await only_button.click(force=True)
+        # else:
+        # # If 'Solamente' is not found, it's safer to clear all first, then check Jamundí
+        # # but 'Solamente' should be there on hover in Google Looker Studio.
+        # await jamundi_option.click(force=True)
+
+        # logger.success(f"Municipality {self.settings.obs_municipio} selected.")
+
+        # await self.page.keyboard.press("Escape")
+        # await asyncio.sleep(5)
+        # except Exception as e:
+        # logger.warning(f"Municipality filter selection issue (might be fixed label): {str(e)}")
 
         # 4. Sequential selection of years to get detailed breakdowns
         years_to_capture = ["2024", "2025", "2026"]
@@ -246,35 +245,33 @@ class LookerStudioScraper:
                     await self.page.keyboard.press("Enter")
                     await self.page.keyboard.press("Escape")
                 
-                logger.info(f"Year {year} selected, now re-ensuring Municipality is {self.settings.obs_municipio}...")
+                logger.info(f"Year {year} selected. Skipping Municipality re-selection for Alcalde dashboard.")
                 await asyncio.sleep(5)
                 
-                # [DISABLED] Re-select Municipality is not needed if it defaults to Jamundí
-                """
-                try:
-                    municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
-                    if await municipio_trigger.is_visible(timeout=5000):
-                        await municipio_trigger.click(force=True)
-                        await asyncio.sleep(2)
-                        
-                        search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
-                        if await search_box.is_visible(timeout=3000):
-                            await search_box.fill("Jamund")
-                            await asyncio.sleep(2)
-                            
-                        target_municipio = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
-                        await target_municipio.hover(timeout=5000)
-                        
-                        solamente_btn = looker_frame.get_by_text("Solamente", exact=True).first
-                        if await solamente_btn.is_visible(timeout=5000):
-                            await solamente_btn.click(force=True)
-                        else:
-                            await target_municipio.click(force=True)
-                            
-                        await self.page.keyboard.press("Escape")
-                except Exception as e:
-                    logger.warning(f"Could not re-ensure Municipality: {e}")
-                """
+                # Re-select Municipality to be sure (it often resets when Year changes)
+                # try:
+                #     municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
+                #     if await municipio_trigger.is_visible(timeout=5000):
+                #         await municipio_trigger.click(force=True)
+                #         await asyncio.sleep(2)
+                #         
+                #         search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
+                #         if await search_box.is_visible(timeout=3000):
+                #             await search_box.fill("Jamund")
+                #             await asyncio.sleep(2)
+                #             
+                #         target_municipio = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
+                #         await target_municipio.hover(timeout=5000)
+                #         
+                #         solamente_btn = looker_frame.get_by_text("Solamente", exact=True).first
+                #         if await solamente_btn.is_visible(timeout=5000):
+                #             await solamente_btn.click(force=True)
+                #         else:
+                #             await target_municipio.click(force=True)
+                #             
+                #         await self.page.keyboard.press("Escape")
+                # except Exception as e:
+                #     logger.warning(f"Could not re-ensure Municipality: {e}")
                 
                 logger.info(f"Waiting for data refresh for {year}...")
                 await asyncio.sleep(15) 
