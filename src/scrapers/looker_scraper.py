@@ -157,12 +157,12 @@ class LookerStudioScraper:
             # 2. Search for Jamundí in the filter's internal search box if it exists
             search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
             if await search_box.is_visible(timeout=3000):
-                await search_box.fill(self.settings.obs_municipio)
+                await search_box.fill("Jamund")
                 await asyncio.sleep(2)
 
             # 3. Use 'Only' (Solo) to select only Jamundí if available, or just click it
             # Looker Studio often has a 'Solo' link on hover
-            jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=self.settings.obs_municipio).first
+            jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
             await jamundi_option.hover()
             await asyncio.sleep(1)
             
@@ -224,19 +224,26 @@ class LookerStudioScraper:
                 target_year = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"], .item-label').filter(has_text=year).first
                 
                 try:
-                    await target_year.wait_for(state="visible", timeout=15000)
+                    await target_year.wait_for(state="visible", timeout=10000)
                 except:
                     logger.warning(f"Year {year} not found in specific classes, trying generic text...")
-                    target_year = looker_frame.get_by_text(year, exact=True).first
+                    target_year = looker_frame.get_by_text(year, exact=False).first
                 
                 # Ensure it's in view before clicking
                 try:
-                    await target_year.wait_for(state="visible", timeout=15000)
+                    await target_year.wait_for(state="visible", timeout=10000)
                     await target_year.click(force=True, timeout=10000)
                 except:
-                    logger.warning(f"Year {year} could not be found to click. Moving to next.")
+                    logger.warning(f"Year {year} could not be found to click. Trying keyboard fallback...")
+                    # Keyboard fallback for virtualized lists
+                    await self.page.keyboard.press("Escape") # Close it
+                    await asyncio.sleep(1)
+                    await anio_trigger.click(force=True) # Reopen it
+                    await asyncio.sleep(1)
+                    await self.page.keyboard.type(year, delay=100)
+                    await asyncio.sleep(1)
+                    await self.page.keyboard.press("Enter")
                     await self.page.keyboard.press("Escape")
-                    continue
                 
                 logger.info(f"Year {year} selected, now re-ensuring Municipality is {self.settings.obs_municipio}...")
                 await asyncio.sleep(5)
@@ -247,18 +254,24 @@ class LookerStudioScraper:
                     if await municipio_trigger.is_visible(timeout=5000):
                         await municipio_trigger.click(force=True)
                         await asyncio.sleep(2)
-                        target_mun = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=self.settings.obs_municipio).first
-                        if await target_mun.is_visible(timeout=5000):
-                            await target_mun.hover()
-                            await asyncio.sleep(1)
-                            only_button = target_mun.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
-                            if await only_button.is_visible(timeout=2000):
-                                await only_button.click(force=True)
-                            else:
-                                await target_mun.click(force=True)
+                        
+                        search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
+                        if await search_box.is_visible(timeout=3000):
+                            await search_box.fill("Jamund")
+                            await asyncio.sleep(2)
+                            
+                        target_municipio = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
+                        await target_municipio.hover(timeout=5000)
+                        
+                        solamente_btn = looker_frame.get_by_text("Solamente", exact=True).first
+                        if await solamente_btn.is_visible(timeout=5000):
+                            await solamente_btn.click(force=True)
+                        else:
+                            await target_municipio.click(force=True)
+                            
                         await self.page.keyboard.press("Escape")
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Could not re-ensure Municipality: {e}")
                 
                 logger.info(f"Waiting for data refresh for {year}...")
                 await asyncio.sleep(15) 
