@@ -166,8 +166,15 @@ class LookerStudioScraper:
             await jamundi_option.hover()
             await asyncio.sleep(1)
             
-            # Click the option itself
-            await jamundi_option.click(force=True)
+            # Click 'Solamente' or 'Only' instead of toggling the checkbox off!
+            only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
+            if await only_button.is_visible(timeout=3000):
+                await only_button.click(force=True)
+            else:
+                # If 'Solamente' is not found, it's safer to clear all first, then check Jamundí
+                # but 'Solamente' should be there on hover in Google Looker Studio.
+                await jamundi_option.click(force=True)
+            
             logger.success(f"Municipality {self.settings.obs_municipio} selected.")
             
             await self.page.keyboard.press("Escape")
@@ -211,7 +218,13 @@ class LookerStudioScraper:
                     logger.warning(f"Year {year} not found in specific classes, trying generic text...")
                     target_year = looker_frame.get_by_text(year, exact=True).first
                 
-                await target_year.click(force=True, timeout=10000)
+                # Ensure it's in view before clicking
+                if await target_year.is_visible(timeout=5000):
+                    await target_year.click(force=True, timeout=10000)
+                else:
+                    logger.warning(f"Year {year} could not be found to click. Moving to next.")
+                    await self.page.keyboard.press("Escape")
+                    continue
                 
                 logger.info(f"Year {year} selected, now re-ensuring Municipality is {self.settings.obs_municipio}...")
                 await asyncio.sleep(5)
@@ -224,7 +237,13 @@ class LookerStudioScraper:
                         await asyncio.sleep(2)
                         target_mun = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=self.settings.obs_municipio).first
                         if await target_mun.is_visible(timeout=5000):
-                            await target_mun.click(force=True)
+                            await target_mun.hover()
+                            await asyncio.sleep(1)
+                            only_button = target_mun.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
+                            if await only_button.is_visible(timeout=2000):
+                                await only_button.click(force=True)
+                            else:
+                                await target_mun.click(force=True)
                         await self.page.keyboard.press("Escape")
                 except:
                     pass
