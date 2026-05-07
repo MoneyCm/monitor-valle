@@ -145,6 +145,7 @@ class LookerStudioScraper:
 
         # PHASE 2: Ensure Municipality filter is set to Jamundí
         logger.info(f"Setting Municipality filter specifically to: {self.settings.obs_municipio}...")
+        """
         try:
             # 1. Open the filter (Using the proven selector from previous versions)
             municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
@@ -248,7 +249,8 @@ class LookerStudioScraper:
                 logger.info(f"Year {year} selected, now re-ensuring Municipality is {self.settings.obs_municipio}...")
                 await asyncio.sleep(5)
                 
-                # Re-select Municipality to be sure (it often resets when Year changes)
+                # [DISABLED] Re-select Municipality is not needed if it defaults to Jamundí
+                """
                 try:
                     municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
                     if await municipio_trigger.is_visible(timeout=5000):
@@ -272,6 +274,7 @@ class LookerStudioScraper:
                         await self.page.keyboard.press("Escape")
                 except Exception as e:
                     logger.warning(f"Could not re-ensure Municipality: {e}")
+                """
                 
                 logger.info(f"Waiting for data refresh for {year}...")
                 await asyncio.sleep(15) 
