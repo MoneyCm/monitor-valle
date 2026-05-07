@@ -210,6 +210,12 @@ class LookerStudioScraper:
                 
                 await asyncio.sleep(5)
                 
+                # Search for the year in the internal search box to fix virtualization off-screen issues
+                search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
+                if await search_box.is_visible(timeout=3000):
+                    await search_box.fill(year)
+                    await asyncio.sleep(2)
+                
                 # Select the specific year from the dropdown list
                 # We use a more flexible item selector
                 target_year = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"], .item-label').filter(has_text=year).first

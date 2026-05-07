@@ -75,7 +75,13 @@ class JamundiBoletinReporter:
 
     def _extract_indicadores(self, df):
         """Extracts crime counts dynamically and identifies historical vs annual."""
-        delitos = ["Homicidio", "Lesiones Personales", "Hurto Personas", "Hurto Motocicletas", "Hurto Automotores", "Extorsión", "Violencia Intrafamiliar"]
+        delitos = [
+            "Homicidio", "Lesiones Personales", "Hurto Personas", "Hurto Motocicletas", 
+            "Hurto Automotores", "Extorsión", "Violencia Intrafamiliar", 
+            "Hurto Entidades Comerciales", "Hurto Residencias", 
+            "Actos Sexuales Con Menor", "Acceso Carnal O Acto Sexual Violento", 
+            "Secuestro", "Feminicidio"
+        ]
         results = []
         # Ensure col_1 is numeric
         df['col_1'] = pd.to_numeric(df['col_1'], errors='coerce').fillna(0)
