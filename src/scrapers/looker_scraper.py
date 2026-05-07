@@ -119,7 +119,7 @@ class LookerStudioScraper:
         self.page.on("request", self._handle_request)
         self.page.on("response", self._handle_response)
         
-        await self.page.goto(home_url, timeout=self.settings.obs_timeout)
+        await self.page.goto(home_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("networkidle")
         
         # 1. Click 'Informe Alcaldes' button
@@ -131,7 +131,7 @@ class LookerStudioScraper:
             logger.success(f"Reached dashboard: {self.page.url}")
         except Exception as e:
             logger.warning(f"Failed to click button, navigating directly to {self.settings.obs_alcalde_url}. Error: {e}")
-            await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout)
+            await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
 
         # 2. Wait for Looker Studio to initialize
         try:

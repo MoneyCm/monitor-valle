@@ -38,7 +38,7 @@ class AuthManager:
         self.page = await self.context.new_page()
         
         logger.info(f"Attempting login to {self.settings.obs_login_url}")
-        await self.page.goto(self.settings.obs_login_url, timeout=self.settings.obs_timeout)
+        await self.page.goto(self.settings.obs_login_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         
         # Fill credentials
         await self.page.fill("#email", self.settings.obs_user)

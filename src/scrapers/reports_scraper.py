@@ -19,7 +19,7 @@ class ReportsScraper:
         """Navigate through the lists of reports and collect all specific report links."""
         logger.info(f"Navigating to reports repository: {self.settings.obs_reports_url}")
         
-        await self.page.goto(self.settings.obs_reports_url, timeout=self.settings.obs_timeout)
+        await self.page.goto(self.settings.obs_reports_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("networkidle")
         
         # Scrape all report links. Usually these are inside '.btn-ver-reporte' or similar.
@@ -36,7 +36,7 @@ class ReportsScraper:
     async def _download_files_from_report(self, report_url: str):
         """Go to a report detail page and download all associated files (PDF, XLSX)."""
         logger.debug(f"Exploring report: {report_url}")
-        await self.page.goto(report_url, timeout=self.settings.obs_timeout)
+        await self.page.goto(report_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("domcontentloaded")
         
         # Extract title and date
