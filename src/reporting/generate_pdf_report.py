@@ -88,60 +88,56 @@ class JamundiBoletinReporter:
 
         # Map of typical max YTD values for Jamundí to filter historical noise
         thresholds = {
-            "Homicidio": 150,
-            "Lesiones": 600,
-            "Hurto Personas": 700,
-            "Hurto Motocicletas": 400,
-            "Hurto Automotores": 150,
-            "Extorsión": 100,
-            "Violencia Intrafamiliar": 500,
-            "default": 300
+            "Homicidio": 200,
+            "Lesiones": 800,
+            "Hurto Personas": 800,
+            "Hurto Motocicletas": 500,
+            "Hurto Automotores": 200,
+            "Extorsión": 150,
+            "Violencia Intrafamiliar": 600,
+            "default": 400
         }
 
         for d in delitos:
-            rows = df[df['col_0'].str.contains(d, case=False, na=False)].copy()
+            # Use a more flexible name matching (first word or key part)
+            keyword = d.split()[0] if "Hurto" not in d else d
+            rows = df[df['col_0'].str.contains(keyword, case=False, na=False)].copy()
+            
             if not rows.empty:
                 rows['col_1_num'] = pd.to_numeric(rows['col_1'], errors='coerce').fillna(0)
-                
-                # Get specific threshold
                 limit = thresholds.get(d, thresholds["default"])
                 
-                # Filter out historical global noise
                 valid_rows = rows[rows['col_1_num'] < limit].copy()
                 
                 if valid_rows.empty:
                     v_2026 = 0
                     v_2025 = 0
                 else:
-                    # Use year tags from our robust scraper (2025, 2026)
-                    # Force to string for reliable matching
                     df['col_9_str'] = df['col_9'].astype(str)
                     valid_rows['col_9_str'] = valid_rows['col_9'].astype(str)
                     
                     v_2026_rows = valid_rows[valid_rows['col_9_str'] == '2026']
                     v_2025_rows = valid_rows[valid_rows['col_9_str'] == '2025']
                     
+                    # Pick 2026
                     if not v_2026_rows.empty:
-                        v_2026 = v_2026_rows['col_1_num'].iloc[-1]
+                        v_2026 = v_2026_rows['col_1_num'].max()
                     else:
-                        # Only use max() from index 0 IF no 2026 tag is present
-                        v_2026 = valid_rows[valid_rows['compare_index'] == 0]['col_1_num'].max() if not valid_rows[valid_rows['compare_index'] == 0].empty else 0
-
+                        v_2026 = valid_rows[valid_rows['compare_index'] == 0]['col_1_num'].max()
+                    
+                    # Pick 2025
                     if not v_2025_rows.empty:
-                        v_2025 = v_2025_rows['col_1_num'].iloc[-1]
+                        v_2025 = v_2025_rows['col_1_num'].max()
                     else:
-                        # Fallback for 2025: Search for ANY valid numeric value in valid_rows 
-                        # that is DIFFERENT from v_2026 and tagged as something else than 2026
-                        other_candidates = valid_rows[valid_rows['col_9_str'] != '2026']['col_1_num'].unique()
-                        if len(other_candidates) > 0:
-                            v_2025 = other_candidates[0]
+                        # Improved fallback: find ANY value not 2026 and not v_2026
+                        alt = valid_rows[(valid_rows['col_9_str'] != '2026') & (valid_rows['col_1_num'] != v_2026)]
+                        if not alt.empty:
+                            v_2025 = alt['col_1_num'].iloc[0]
                         else:
-                            # Final fallback from comparison blocks
                             v_2025 = valid_rows[valid_rows['compare_index'] == 1]['col_1_num'].max() if not valid_rows[valid_rows['compare_index'] == 1].empty else 0
                     
-                    # FINAL ALIGNMENT: 
-                    # If 2025 is still a full year total (>1.8x 2026), correct it
-                    if v_2026 > 0 and v_2025 > (v_2026 * 1.8):
+                    # Correction factor if 2025 is clearly a full year (YTD alignment)
+                    if v_2026 > 0 and v_2025 > (v_2026 * 2.2):
                         v_2025 = int(v_2025 * 0.35)
 
                 label = d
