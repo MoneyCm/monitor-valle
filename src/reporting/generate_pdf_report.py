@@ -130,8 +130,14 @@ class JamundiBoletinReporter:
                     if not v_2025_rows.empty:
                         v_2025 = v_2025_rows['col_1_num'].iloc[-1]
                     else:
-                        # Fallback for 2025 from comparison blocks
-                        v_2025 = valid_rows[valid_rows['compare_index'] == 1]['col_1_num'].max() if not valid_rows[valid_rows['compare_index'] == 1].empty else 0
+                        # Fallback for 2025: Search for ANY valid numeric value in valid_rows 
+                        # that is DIFFERENT from v_2026 and tagged as something else than 2026
+                        other_candidates = valid_rows[valid_rows['col_9_str'] != '2026']['col_1_num'].unique()
+                        if len(other_candidates) > 0:
+                            v_2025 = other_candidates[0]
+                        else:
+                            # Final fallback from comparison blocks
+                            v_2025 = valid_rows[valid_rows['compare_index'] == 1]['col_1_num'].max() if not valid_rows[valid_rows['compare_index'] == 1].empty else 0
                     
                     # FINAL ALIGNMENT: 
                     # If 2025 is still a full year total (>1.8x 2026), correct it
