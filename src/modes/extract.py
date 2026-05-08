@@ -82,7 +82,7 @@ class ExtractMode:
                     raw_data = await self._replay_request(client, endpoint)
                     
                     if raw_data:
-                        records = self.parser.parse_response(raw_data, year=year, municipio=self.municipio)
+                        records = self.parser.parse_response(raw_data, year_tag=str(year))
                         all_records.extend(records)
             
             # 6. Consolidation and Validation

@@ -24,10 +24,10 @@ class LookerAPIParser:
                 responses = data.get("dataResponse") or data.get("batchedData") or []
 
             for resp in responses:
-                # ROLE CHECK: Ignore totals and rollups that inflate the count
+                # ROLE CHECK: ONLY take 'main' data to avoid double-counting with totals/rollups
                 role = resp.get("role", "main")
-                if role not in ["main", "rowRollup0", "colRollup0"]:
-                    logger.debug(f"Skipping response with role: {role}")
+                if role != "main":
+                    logger.debug(f"Skipping non-main response with role: {role}")
                     continue
 
                 # Navigate to the dataset (Columnar Format V2)
@@ -51,12 +51,54 @@ class LookerAPIParser:
                         
                     # Reconstruct rows by transposing columns
                     num_rows = len(col_data[0])
+                    
+                    # Identify if any column contains municipality information to filter strictly
+                    municipio_col_idx = -1
+                    for idx, values in enumerate(col_data):
+                        unique_vals = set(str(v) for v in values if v is not None)
+                        if "Jamundí" in unique_vals or "JAMUNDÍ" in unique_vals:
+                            municipio_col_idx = idx
+                            break
+
+                    is_compare = subset.get("isCompare", False)
+                    compare_idx = subset.get("viewTags", {}).get("compareIndex", 0)
+                    
+                    if is_compare or compare_idx > 0:
+                        logger.debug(f"Parsing comparison data: is_compare={is_compare}, compare_idx={compare_idx}, rows={num_rows}")
+
+                    # SANITY CHECK: Detect global Valle del Cauca blocks by value magnitude
+                    # In Jamundí, homicide/extortion totals are never > 500 per year. 
+                    # If we see thousands, it's a global block.
+                    is_global_block = False
+                    for idx, values in enumerate(col_data):
+                        # Check numeric columns for suspicious magnitudes
+                        try:
+                            numeric_vals = [float(v) for v in values if str(v).replace('.','',1).isdigit()]
+                            if any(v > 800 for v in numeric_vals): # Threshold for global data
+                                is_global_block = True
+                                break
+                        except:
+                            continue
+                    
+                    if is_global_block:
+                        logger.debug(f"Discarding global data block (suspiciously high values).")
+                        continue
+
                     for i in range(num_rows):
+                        # Strict filtering: ONLY if we found a municipality column
+                        if municipio_col_idx != -1:
+                            val = str(col_data[municipio_col_idx][i]) if i < len(col_data[municipio_col_idx]) else ""
+                            if "Jamund" not in val:
+                                continue
+                        # If no column found, we assume the scraper already filtered the session
+
                         record = {
                             "fecha_extraccion": datetime.datetime.now().isoformat(),
                             "fuente": "API Interna (Looker Studio)",
                             "municipio": "Jamundí",
-                            "metodo_extraccion": "API_INTERNA_COLUMNAR"
+                            "metodo_extraccion": "API_INTERNA_COLUMNAR",
+                            "is_compare": subset.get("isCompare", False),
+                            "compare_index": subset.get("viewTags", {}).get("compareIndex", 0)
                         }
                         
                         # Add generic columns
@@ -74,7 +116,7 @@ class LookerAPIParser:
             if not records and isinstance(data, dict):
                 for resp in responses:
                     role = resp.get("role", "main")
-                    if role not in ["main", "rowRollup0", "colRollup0"]:
+                    if role != "main":
                         continue
 
                     data_blocks = resp.get("data") or []

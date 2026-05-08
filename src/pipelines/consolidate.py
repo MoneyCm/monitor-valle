@@ -36,7 +36,7 @@ class ConsolidationPipeline:
             df = pd.read_csv(csv_path, encoding="utf-8-sig")
             
             # Map column names to standard fields
-            # Common Looker header patterns: "AÑO", "MES", "CONDUCTA", "Casos"
+            # Common Looker header patterns: "AÑO", "MES", "CONDUCTA", "Casos", "MUNICIPIO"
             column_map = {
                 "AÑO": "anio",
                 "Year": "anio",
@@ -45,12 +45,19 @@ class ConsolidationPipeline:
                 "CONDUCTA": "delito",
                 "Conducta": "delito",
                 "Casos": "valor",
-                "Metric": "valor"
+                "Metric": "valor",
+                "MUNICIPIO": "municipio_raw",
+                "Municipio": "municipio_raw"
             }
             
             # Renaming and cleaning
             df.rename(columns=column_map, inplace=True)
             
+            # Strict Filtering if municipality info is present
+            if "municipio_raw" in df.columns:
+                logger.info("Filtering CSV by Jamundí...")
+                df = df[df["municipio_raw"].astype(str).str.contains("Jamund", case=False, na=False)].copy()
+                
             # Ensure essential columns exist
             required = ["anio", "mes", "delito", "valor"]
             for col in required:

@@ -17,7 +17,7 @@ class LookerStudioScraper:
         self.captured_requests: List[Dict[str, Any]] = []
         self.captured_responses: List[Dict[str, Any]] = [] 
         self.exported_files: List[Path] = []
-        self.current_year_focus = "Historical" 
+        self.current_year_focus = "Initial" # Changed from Historical to Initial
 
     async def _handle_request(self, request: Request):
         """Intercepts all requests for discovery/tracing. Handles binary post_data safely."""
@@ -39,6 +39,7 @@ class LookerStudioScraper:
     async def _handle_response(self, response: Response):
         """Intercepts XHR responses containing the actual data blocks."""
         is_looker_data = "google" in response.url and ("get_data" in response.url or "batchedData" in response.url)
+        
         if is_looker_data:
             try:
                 if response.status == 200:
@@ -53,7 +54,7 @@ class LookerStudioScraper:
                         "data": payload,
                         "year_tag": self.current_year_focus
                     })
-                    logger.success(f"Captured data block ({len(text)} bytes) from {response.url[:50]}...")
+                    logger.success(f"Captured data block ({len(text)} bytes) from {response.url[:50]}... (Total: {len(self.captured_responses)})")
             except Exception as e:
                 logger.warning(f"Could not parse response from {response.url[:30]}: {str(e)}")
 
@@ -77,8 +78,8 @@ class LookerStudioScraper:
             await asyncio.sleep(5) # Aumentado de 2 a 5
             
             # 4. Find the 'More Options' (3 dots) button
-            # We look for buttons with specific labels, taking only the first match to avoid strict mode errors
-            menu_btn = looker_frame.locator('button[aria-label*="opciones"], button[aria-label*="options"], .flyout-menu-button').first
+            # Looker Studio typically uses an icon with 'more_vert' or specific aria labels for the table menu
+            menu_btn = looker_frame.locator('button[aria-label*="opciones"], button[aria-label*="options"], .flyout-menu-button, button:has(i:has-text("more_vert")), button:has(span:has-text("more_vert"))').first
             await menu_btn.wait_for(state="visible", timeout=20000) # Espera explícita a que sea visible
             await menu_btn.click(timeout=20000) # Aumentado de 10000 a 20000
             logger.debug("Table context menu opened.")
@@ -144,44 +145,73 @@ class LookerStudioScraper:
         looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
 
         # PHASE 2: Ensure Municipality filter is set to Jamundí
-        logger.info(f"Skipping Municipality filter interaction as Alcalde dashboard is pre-filtered for {self.settings.obs_municipio}.")
-        # try:
-        # # 1. Open the filter (Using the proven selector from previous versions)
-        # municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
+        logger.info(f"Ensuring Municipality filter is set to {self.settings.obs_municipio}...")
+        try:
+            # 1. Open the filter
+            municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio"), .lego-control').filter(has_text=re.compile(r"MUNICIPIO|Municipio", re.I)).last
+            
+            await municipio_trigger.hover()
+            await asyncio.sleep(1)
+            await municipio_trigger.click(force=True)
+            await asyncio.sleep(3)
+            
+            # 2. Search for Jamundí in the filter's internal search box
+            search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"], input[type="text"]').first
+            if await search_box.is_visible(timeout=5000):
+                await search_box.fill("Jamund")
+                await asyncio.sleep(2)
+
+            # 3. Use 'Only' (Solo) to select only Jamundí
+            # This is CRITICAL to avoid aggregated data
+            jamundi_option = looker_frame.get_by_text("Jamund", exact=False).first
+            
+            # If the text-based locator isn't enough, try a combined one
+            if not await jamundi_option.is_visible(timeout=5000):
+                 jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
+            
+            if await jamundi_option.is_visible(timeout=5000):
+                logger.info("Found Jamundí option, attempting to click 'Solamente'...")
+                await jamundi_option.hover()
+                await asyncio.sleep(2)
+
+                # Look for 'Solamente' or 'Only' link that appears on hover
+                # In Looker Studio it is often an element that says "Solamente" next to the name
+                only_button = looker_frame.get_by_text("Solamente", exact=False).first
+                if not await only_button.is_visible(timeout=2000):
+                     only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only|Solo", re.IGNORECASE)).first
+                
+                if await only_button.is_visible(timeout=3000):
+                    logger.info("Clicking 'Solamente' (Only) link to filter strictly.")
+                    await only_button.click(force=True)
+                    # REFUERZO: Limpiar todo lo capturado ANTES de este clic (que era el Valle completo)
+                    await asyncio.sleep(5)
+                    logger.info("CLEANING: Discarding pre-filter global data blocks...")
+                    self.captured_responses.clear()
+                else:
+                    logger.info("Selecting Jamundí option directly (check/toggle).")
+                    await jamundi_option.click(force=True)
+                    await asyncio.sleep(5)
+                    self.captured_responses.clear()
+                
+                logger.success(f"Municipality {self.settings.obs_municipio} selected.")
+            else:
+                logger.warning(f"Could not find Jamundí option in the filter list.")
+
+        except Exception as e:
+            logger.warning(f"Municipality filter selection issue: {str(e)}")
+        finally:
+            await self.page.keyboard.press("Escape")
+            await asyncio.sleep(2)
+
+        # 3.5 Backup check: Some dashboards have a search-style filter for municipality
+        # If we see aggregated data, we try this alternative
+        # (This replaces the old failing force-toggle block)
+
+        # We DO NOT clear captured_responses anymore because we rely on the parser to filter.
+        # Instead, we wait a bit more to ensure all background data from the municipality selection is caught.
+        logger.info("Waiting 30s to ensure all filtered data blocks are captured...")
+        await asyncio.sleep(30)
         
-        # await municipio_trigger.hover()
-        # await asyncio.sleep(1)
-        # await municipio_trigger.click(force=True)
-        # await asyncio.sleep(3)
-        
-        # # 2. Search for Jamundí in the filter's internal search box if it exists
-        # search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
-        # if await search_box.is_visible(timeout=3000):
-        # await search_box.fill("Jamund")
-        # await asyncio.sleep(2)
-
-        # # 3. Use 'Only' (Solo) to select only Jamundí if available, or just click it
-        # # Looker Studio often has a 'Solo' link on hover
-        # jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
-        # await jamundi_option.hover()
-        # await asyncio.sleep(1)
-
-        # # Click 'Solamente' or 'Only' instead of toggling the checkbox off!
-        # only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only", re.IGNORECASE)).first
-        # if await only_button.is_visible(timeout=3000):
-        # await only_button.click(force=True)
-        # else:
-        # # If 'Solamente' is not found, it's safer to clear all first, then check Jamundí
-        # # but 'Solamente' should be there on hover in Google Looker Studio.
-        # await jamundi_option.click(force=True)
-
-        # logger.success(f"Municipality {self.settings.obs_municipio} selected.")
-
-        # await self.page.keyboard.press("Escape")
-        # await asyncio.sleep(5)
-        # except Exception as e:
-        # logger.warning(f"Municipality filter selection issue (might be fixed label): {str(e)}")
-
         # 4. Sequential selection of years to get detailed breakdowns
         years_to_capture = ["2024", "2025", "2026"]
         logger.info(f"Starting year-by-year extraction for {years_to_capture}...")
@@ -210,71 +240,39 @@ class LookerStudioScraper:
                 
                 await asyncio.sleep(5)
                 
-                # Search for the year in the internal search box to fix virtualization off-screen issues
-                search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
-                try:
-                    await search_box.wait_for(state="visible", timeout=3000)
-                    await search_box.fill(year)
+                # Use the same 'Solamente' strategy for Year
+                logger.info(f"Applying robust filter for year: {year}")
+                
+                # JS-based Click to avoid overlays on the trigger
+                await anio_trigger.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+                await asyncio.sleep(4)
+                
+                # Search year
+                search_box_year = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"], input[type="text"]').first
+                if await search_box_year.is_visible(timeout=5000):
+                    await search_box_year.fill(year)
                     await asyncio.sleep(2)
-                except:
-                    pass
                 
-                # Select the specific year from the dropdown list
-                # We use a more flexible item selector
-                target_year = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"], .item-label').filter(has_text=year).first
-                
-                try:
-                    await target_year.wait_for(state="visible", timeout=10000)
-                except:
-                    logger.warning(f"Year {year} not found in specific classes, trying generic text...")
-                    target_year = looker_frame.get_by_text(year, exact=False).first
-                
-                # Ensure it's in view before clicking
-                try:
-                    await target_year.wait_for(state="visible", timeout=10000)
-                    await target_year.click(force=True, timeout=10000)
-                except:
-                    logger.warning(f"Year {year} could not be found to click. Trying keyboard fallback...")
-                    # Keyboard fallback for virtualized lists
-                    await self.page.keyboard.press("Escape") # Close it
-                    await asyncio.sleep(1)
-                    await anio_trigger.click(force=True) # Reopen it
-                    await asyncio.sleep(1)
-                    await self.page.keyboard.type(year, delay=100)
-                    await asyncio.sleep(1)
-                    await self.page.keyboard.press("Enter")
+                # Find the option and click 'Solamente' using JS to avoid hover issues
+                year_option = looker_frame.get_by_text(year, exact=True).first
+                if await year_option.is_visible(timeout=5000):
+                    logger.info(f"Found option {year}, triggering Solamente via JS...")
+                    
+                    # Try to find the 'Solamente' button by text nearby or within the same row
+                    only_btn_year = looker_frame.get_by_text("Solamente", exact=False).first
+                    if await only_btn_year.is_visible(timeout=3000):
+                         await only_btn_year.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+                    else:
+                         # Fallback: click the year directly via JS
+                         await year_option.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+                    
+                    await asyncio.sleep(3)
                     await self.page.keyboard.press("Escape")
+                else:
+                    logger.warning(f"Year option {year} not found in dropdown")
                 
-                logger.info(f"Year {year} selected. Skipping Municipality re-selection for Alcalde dashboard.")
-                await asyncio.sleep(5)
-                
-                # Re-select Municipality to be sure (it often resets when Year changes)
-                # try:
-                #     municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio")').last
-                #     if await municipio_trigger.is_visible(timeout=5000):
-                #         await municipio_trigger.click(force=True)
-                #         await asyncio.sleep(2)
-                #         
-                #         search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"]').first
-                #         if await search_box.is_visible(timeout=3000):
-                #             await search_box.fill("Jamund")
-                #             await asyncio.sleep(2)
-                #             
-                #         target_municipio = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
-                #         await target_municipio.hover(timeout=5000)
-                #         
-                #         solamente_btn = looker_frame.get_by_text("Solamente", exact=True).first
-                #         if await solamente_btn.is_visible(timeout=5000):
-                #             await solamente_btn.click(force=True)
-                #         else:
-                #             await target_municipio.click(force=True)
-                #             
-                #         await self.page.keyboard.press("Escape")
-                # except Exception as e:
-                #     logger.warning(f"Could not re-ensure Municipality: {e}")
-                
-                logger.info(f"Waiting for data refresh for {year}...")
-                await asyncio.sleep(15) 
+                logger.info(f"Waiting 25s for {year} data refresh...")
+                await asyncio.sleep(25) 
                 
                 logger.success(f"Captured data sequence for {year}")
                 await self.page.keyboard.press("Escape")
