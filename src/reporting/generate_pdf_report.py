@@ -89,13 +89,13 @@ class JamundiBoletinReporter:
         # Map of typical max YTD values for Jamundí to filter historical noise
         thresholds = {
             "Homicidio": 150,
-            "Lesiones": 500,
-            "Hurto Personas": 600,
-            "Hurto Motocicletas": 300,
-            "Hurto Automotores": 100,
-            "Extorsión": 50,
-            "Violencia Intrafamiliar": 400,
-            "default": 200
+            "Lesiones": 600,
+            "Hurto Personas": 700,
+            "Hurto Motocicletas": 400,
+            "Hurto Automotores": 150,
+            "Extorsión": 100,
+            "Violencia Intrafamiliar": 500,
+            "default": 300
         }
 
         for d in delitos:
