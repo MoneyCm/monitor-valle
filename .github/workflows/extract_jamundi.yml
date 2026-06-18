@@ -2,8 +2,8 @@ name: "Jamundí Data Extraction"
 
 on:
   schedule:
-    # Run every Monday at 8:00 AM UTC
-    - cron: '0 8 * * 1'
+    # Run every day at 8:00 AM UTC
+    - cron: '0 8 * * *'
   workflow_dispatch:
     # Allow manual triggers
     inputs:
@@ -52,7 +52,7 @@ jobs:
           python -m src.reporting.check_changes
 
       - name: Send Email Report
-        if: env.DATA_CHANGED == 'true' || github.event_name == 'schedule'
+        if: env.DATA_CHANGED == 'true'
         env:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}

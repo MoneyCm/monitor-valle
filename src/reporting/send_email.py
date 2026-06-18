@@ -14,19 +14,22 @@ def send_report_email():
         return
 
     msg = EmailMessage()
-    msg['Subject'] = 'Nuevo Boletín de Seguridad - Jamundí (Datos Actualizados)'
+    msg['Subject'] = 'Actualización: Boletín Estadístico de Seguridad y Convivencia - Jamundí'
     msg['From'] = sender_email
     msg['To'] = receiver_email
     
-    msg.set_content("""Hola,
+    msg.set_content("""Cordial saludo,
 
-Se ha detectado una actualización en la información de seguridad de Jamundí en el observatorio.
-Adjunto encontrarás el boletín semanal generado automáticamente con los nuevos datos consolidados.
+Les informo que se ha detectado una nueva actualización de datos en el Observatorio del Delito Valle. Con base en esta información, se ha generado el Boletín Estadístico de Seguridad y Convivencia para el municipio de Jamundí, comparando el acumulado del año actual frente al mismo periodo del año anterior.
 
-Saludos,
+Adjunto a este correo comparto el boletín detallado en formato PDF para su revisión.
+
+Atentamente,
+
 César Alfonso Forero Molano
 Profesional Universitario II
-Secretaria de Seguridad y Convivencia""")
+Secretaría de Seguridad y Convivencia
+Alcaldía Municipal de Jamundí""")
 
     pdf_path = Path("data/final/boletin_semanal_jamundi.pdf")
     if pdf_path.exists():

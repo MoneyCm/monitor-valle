@@ -83,21 +83,107 @@ class JamundiBoletinReporter:
         self.prev_year = years[1] if len(years) > 1 else str(int(self.current_year) - 1)
         return years
 
-    def _get_crime_value(self, df, delito, year):
-        """Obtiene el conteo de un delito específico en un año."""
+    def _detect_corte_month(self, df):
+        """Detecta el último mes con datos mensuales en el año actual.
+
+        El Observatorio entrega filas donde col_0 es un número 1-12 (mes)
+        cuando is_compare=True, compare_index=1. Esas son las sumas mensuales.
+        """
+        monthly = df[
+            (df['col_9'] == str(self.current_year)) &
+            (df['is_compare'] == True) &
+            (df['compare_index'] == 1) &
+            (df['col_0'].astype(str).str.match(r'^\d+$', na=False))
+        ].copy()
+        if monthly.empty:
+            # Fallback: intentar detectar el mes a partir de las fechas YYYY-MM-DD en col_0 para el año actual
+            import re
+            dates = df[
+                (df['col_9'] == str(self.current_year)) & 
+                (df['col_0'].astype(str).str.match(r'^\d{4}-\d{2}-\d{2}$', na=False))
+            ]['col_0'].unique()
+            
+            parsed_dates = []
+            for d in dates:
+                try:
+                    parsed_dates.append(datetime.datetime.strptime(str(d), "%Y-%m-%d").date())
+                except Exception:
+                    pass
+            
+            if parsed_dates:
+                max_date = max(parsed_dates)
+                # Si el día del mes es menor a 15, consideramos que el mes está incompleto
+                # y retrocedemos al mes anterior para que la comparación sea justa
+                if max_date.day < 15:
+                    self.corte_month = max_date.month - 1 if max_date.month > 1 else 12
+                else:
+                    self.corte_month = max_date.month
+                self.corte_month_name = self._month_name(self.corte_month)
+                return self.corte_month
+
+            # Fallback secundario: usar el mes actual del sistema
+            self.corte_month = datetime.datetime.now().month
+            self.corte_month_name = self._month_name(self.corte_month)
+            return self.corte_month
+
+        months = pd.to_numeric(monthly['col_0'], errors='coerce').dropna().astype(int)
+        self.corte_month = int(months.max())
+        self.corte_month_name = self._month_name(self.corte_month)
+        return self.corte_month
+
+    @staticmethod
+    def _month_name(n):
+        """Convierte número de mes a abreviatura en español."""
+        meses = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+                 7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
+        return meses.get(n, f'Mes {n}')
+
+    def _get_crime_ytd(self, df, delito, year, corte_month):
+        """Obtiene el acumulado YTD de un delito (enero hasta corte_month).
+
+        Si hay datos mensuales agregados (is_compare=True, compare_index=1),
+        proporciona el YTD escalando el total anual del delito por la proporción
+        de casos mensuales que ocurrieron hasta corte_month.
+        De lo contrario, utiliza el total anual del delito.
+        """
+        crime_total = self._get_crime_total(df, delito, year)
+        
+        monthly = df[
+            (df['col_9'] == str(year)) &
+            (df['is_compare'] == True) &
+            (df['compare_index'] == 1) &
+            (df['col_0'].astype(str).str.match(r'^\d+$', na=False))
+        ].copy()
+        monthly['mes'] = pd.to_numeric(monthly['col_0'], errors='coerce')
+
+        if monthly.empty:
+            return crime_total
+
+        total_ytd_all = int(monthly[(monthly['mes'] >= 1) & (monthly['mes'] <= corte_month)]['col_1'].sum())
+        total_full_all = int(monthly['col_1'].sum())
+        
+        if total_full_all > 0:
+            ratio = total_ytd_all / total_full_all
+            return int(round(crime_total * ratio))
+        else:
+            return crime_total
+
+    def _get_crime_total(self, df, delito, year):
+        """Obtiene el total anual de un delito (fallback sin datos mensuales)."""
         mask = (df['col_0'].str.contains(delito, case=False, na=False)) & \
-               (df['col_9'] == str(year))
+               (df['col_9'] == str(year)) & \
+               (df['is_compare'] == False)
         rows = df[mask]
         if rows.empty:
             return 0
         return int(rows['col_1'].max())
 
     def _extract_indicadores(self, df):
-        """Compara cada delito: año actual vs año anterior."""
+        """Compara cada delito: YTD año actual vs YTD mismo periodo año anterior."""
         results = []
         for delito in self.DELITOS:
-            v_curr = self._get_crime_value(df, delito, self.current_year)
-            v_prev = self._get_crime_value(df, delito, self.prev_year)
+            v_curr = self._get_crime_ytd(df, delito, self.current_year, self.corte_month)
+            v_prev = self._get_crime_ytd(df, delito, self.prev_year, self.corte_month)
             diff = v_curr - v_prev
             if v_prev > 0:
                 var_pct = ((v_curr - v_prev) / v_prev) * 100
@@ -243,14 +329,28 @@ class JamundiBoletinReporter:
         return y + 12
 
     def _draw_kpi_card(self, pdf, x, y, w, h, accent_color, label, value, subtext=""):
-        """Tarjeta KPI con borde superior de color."""
-        # Fondo blanco con borde gris
-        pdf.set_fill_color(*self.COLOR_BLANCO)
-        pdf.set_draw_color(*self.COLOR_GRIS)
+        """Tarjeta KPI con borde superior de color y fondo premium destacado."""
+        # Detectar color de fondo y de texto del valor para destacar mejoras/empeoramientos
+        if accent_color == self.COLOR_VERDE:
+            card_bg = (240, 253, 244) # emerald-50
+            border_color = (187, 247, 208) # green-200
+            val_color = (22, 101, 52) # dark green
+        elif accent_color == self.COLOR_ROJO:
+            card_bg = (254, 242, 242) # red-50
+            border_color = (254, 202, 202) # red-200
+            val_color = (153, 27, 27) # dark red
+        else:
+            card_bg = self.COLOR_BLANCO
+            border_color = self.COLOR_GRIS
+            val_color = accent_color
+
+        # Dibujar fondo y borde
+        pdf.set_fill_color(*card_bg)
+        pdf.set_draw_color(*border_color)
         pdf.set_line_width(0.3)
         pdf.rect(x, y, w, h, style='DF')
 
-        # Borde superior de color (acento)
+        # Borde superior de acento (solid)
         pdf.set_fill_color(*accent_color)
         pdf.set_draw_color(*accent_color)
         pdf.rect(x, y, w, 1.5, style='F')
@@ -264,7 +364,7 @@ class JamundiBoletinReporter:
         # Valor (centro, grande)
         pdf.set_xy(x, y + h / 2 - 3)
         pdf.set_font("Helvetica", "B", 18)
-        pdf.set_text_color(*accent_color)
+        pdf.set_text_color(*val_color)
         pdf.cell(w, 8, str(value), align="C", new_x="LMARGIN", new_y="NEXT")
 
         # Subtexto (abajo)
@@ -363,12 +463,9 @@ class JamundiBoletinReporter:
             pdf.rect(x, y, sum(col_widths), row_h, style='D')
 
             for i, val in enumerate(row):
-                pdf.set_xy(x, y + 1)
-                pdf.set_font("Helvetica", "", 7.5)
-
-                # Color para diferencias (columnas DIF. o VAR.%)
                 sval = str(val)
-                is_diff_col = headers[i].startswith(('DIF', 'VAR'))
+                is_diff_col = headers[i].upper().startswith(('DIF', 'VAR'))
+                
                 if is_diff_col:
                     # Parsear valor numérico (quita + y %)
                     try:
@@ -377,24 +474,44 @@ class JamundiBoletinReporter:
                         num_val = 0  # "N/A" u otro texto
 
                     if num_val > 0:
-                        # Más delitos vs año anterior = ROJO (empeoró)
-                        pdf.set_text_color(*self.COLOR_ROJO)
+                        # Más delitos vs año anterior = ROJO (empeoró) - Badge rojo
+                        bg_color = (254, 226, 226) # light red (red-100)
+                        text_color = (153, 27, 27) # dark red (red-800)
                     elif num_val < 0:
-                        # Menos delitos vs año anterior = VERDE (mejoró)
-                        pdf.set_text_color(*self.COLOR_VERDE)
+                        # Menos delitos vs año anterior = VERDE (mejoró) - Badge verde
+                        bg_color = (220, 252, 231) # light green (green-100)
+                        text_color = (22, 101, 52) # dark green (green-800)
                     else:
-                        # Sin cambios = gris neutro
-                        pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
+                        # Sin cambios = gris neutro - Badge gris
+                        bg_color = (241, 245, 249) # light gray
+                        text_color = (71, 85, 105) # slate-600
+                    
+                    # Dibujar el badge (fondo redondeado/rectángulo lleno)
+                    badge_w = col_widths[i] - 4
+                    badge_h = row_h - 2
+                    badge_x = x + 2
+                    badge_y = y + 1
+                    
+                    pdf.set_fill_color(*bg_color)
+                    pdf.rect(badge_x, badge_y, badge_w, badge_h, style='F')
+                    
+                    # Escribir el texto del valor encima del badge
+                    pdf.set_xy(badge_x, badge_y + 0.5)
                     pdf.set_font("Helvetica", "B", 7.5)
-                elif i == 0:
-                    pdf.set_text_color(*self.COLOR_TEXTO)
-                    pdf.set_font("Helvetica", "B", 7.5)
+                    pdf.set_text_color(*text_color)
+                    pdf.cell(badge_w, badge_h - 1, self._safe(sval), align='C')
                 else:
-                    pdf.set_text_color(*self.COLOR_TEXTO)
-                    pdf.set_font("Helvetica", "B", 7.5)
-
-                pdf.cell(col_widths[i], row_h - 2,
-                         self._safe(sval), align=col_aligns[i])
+                    pdf.set_xy(x, y + 1)
+                    if i == 0:
+                        pdf.set_text_color(*self.COLOR_TEXTO)
+                        pdf.set_font("Helvetica", "B", 7.5)
+                    else:
+                        pdf.set_text_color(*self.COLOR_TEXTO)
+                        pdf.set_font("Helvetica", "", 7.5)
+                    
+                    pdf.cell(col_widths[i], row_h - 2,
+                             self._safe(sval), align=col_aligns[i])
+                
                 x += col_widths[i]
 
             y += row_h
@@ -407,6 +524,7 @@ class JamundiBoletinReporter:
     def create_boletin(self):
         df = self._load_data()
         self._detect_years(df)
+        self._detect_corte_month(df)
         indicadores = self._extract_indicadores(df)
         total_curr, total_prev = self._calc_totals(indicadores)
 
@@ -498,8 +616,9 @@ class JamundiBoletinReporter:
         c5_h = 28
         for i, item in enumerate(top5):
             cx = 15 + i * (c5_w + c5_gap)
+            card_accent = self.COLOR_VERDE if item['diff'] < 0 else self.COLOR_ROJO if item['diff'] > 0 else self.COLOR_AZUL
             self._draw_kpi_card(pdf, cx, content_y, c5_w, c5_h,
-                                self.COLOR_AZUL,
+                                card_accent,
                                 item['name'][:18], f"{item['current']:,}",
                                 f"vs {item['prev']} ({item['var']})")
 
