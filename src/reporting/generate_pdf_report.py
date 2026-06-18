@@ -52,6 +52,7 @@ class JamundiBoletinReporter:
 
         self.current_year = None
         self.prev_year = None
+        self.latest_date_str = ""
 
     # ================================================================
     #  UTILIDADES
@@ -112,6 +113,7 @@ class JamundiBoletinReporter:
             
             if parsed_dates:
                 max_date = max(parsed_dates)
+                self.latest_date_str = max_date.strftime("%d/%m/%Y")
                 # Si el día del mes es menor a 15, consideramos que el mes está incompleto
                 # y retrocedemos al mes anterior para que la comparación sea justa
                 if max_date.day < 15:
@@ -124,11 +126,15 @@ class JamundiBoletinReporter:
             # Fallback secundario: usar el mes actual del sistema
             self.corte_month = datetime.datetime.now().month
             self.corte_month_name = self._month_name(self.corte_month)
+            self.latest_date_str = datetime.datetime.now().strftime("%d/%m/%Y")
             return self.corte_month
 
         months = pd.to_numeric(monthly['col_0'], errors='coerce').dropna().astype(int)
         self.corte_month = int(months.max())
         self.corte_month_name = self._month_name(self.corte_month)
+        import calendar
+        last_day = calendar.monthrange(int(self.current_year), self.corte_month)[1]
+        self.latest_date_str = f"{last_day:02d}/{self.corte_month:02d}/{self.current_year}"
         return self.corte_month
 
     @staticmethod
@@ -620,7 +626,7 @@ class JamundiBoletinReporter:
             self._draw_kpi_card(pdf, cx, content_y, c5_w, c5_h,
                                 card_accent,
                                 item['name'][:18], f"{item['current']:,}",
-                                f"vs {item['prev']} ({item['var']})")
+                                f"vs {item['prev']} ({item['var']})\nCorte: {self.latest_date_str}")
 
         # Footer
         self._draw_footer(pdf, 1)
@@ -635,16 +641,17 @@ class JamundiBoletinReporter:
         content_y = self._draw_section_title(pdf, content_y, 4,
                                              f"Comparativo Acumulado por Delito")
 
-        headers_4 = ["Delito", f"Acum. {self.prev_year}",
+        headers_4 = ["Delito", "Últ. Dato", f"Acum. {self.prev_year}",
                      f"Acum. {self.current_year}", "Dif.", "Var. %"]
-        widths_4 = [55, 30, 30, 25, 25]
+        widths_4 = [45, 25, 28, 28, 27, 27]
+        col_aligns_4 = ['L', 'C', 'C', 'C', 'C', 'C']
         rows_4 = []
         for r in indicadores:
             diff_str = f"{'+' if r['diff'] > 0 else ''}{r['diff']}"
-            rows_4.append([r['name'], f"{r['prev']:,}", f"{r['current']:,}",
+            rows_4.append([r['name'], self.latest_date_str, f"{r['prev']:,}", f"{r['current']:,}",
                            diff_str, r['var']])
 
-        content_y = self._draw_table(pdf, content_y, headers_4, rows_4, widths_4)
+        content_y = self._draw_table(pdf, content_y, headers_4, rows_4, widths_4, col_aligns_4)
 
         # --- Sección 5: Gráfica de evolución ---
         content_y = self._draw_section_title(pdf, content_y, 5, "Evolucion Temporal del Delito")
