@@ -2,16 +2,26 @@ import hashlib
 import sys
 from pathlib import Path
 import os
+import pandas as pd
 from src.core.logging_config import logger
 
 def get_file_hash(filepath):
-    hasher = hashlib.md5()
     try:
-        with open(filepath, 'rb') as f:
-            buf = f.read()
-            hasher.update(buf)
-        return hasher.hexdigest()
+        # Cargar el CSV y omitir la columna fecha_extraccion que cambia en cada ejecución
+        df = pd.read_csv(filepath)
+        if "fecha_extraccion" in df.columns:
+            df = df.drop(columns=["fecha_extraccion"])
+        
+        # Ordenar los datos para garantizar un hash consistente e independiente del orden de filas
+        df_sorted = df.sort_values(by=list(df.columns)).reset_index(drop=True)
+        
+        # Calcular MD5 sobre la representación en texto de los datos puros
+        data_str = df_sorted.to_string(index=False)
+        return hashlib.md5(data_str.encode('utf-8')).hexdigest()
     except FileNotFoundError:
+        return None
+    except Exception as e:
+        logger.error(f"Error al calcular el hash de datos: {e}")
         return None
 
 def main():
