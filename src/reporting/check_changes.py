@@ -2,26 +2,46 @@ import hashlib
 import sys
 from pathlib import Path
 import os
+import json
 import pandas as pd
 from src.core.logging_config import logger
+from src.reporting.generate_pdf_report import JamundiBoletinReporter
 
 def get_file_hash(filepath):
     try:
-        # Cargar el CSV y omitir la columna fecha_extraccion que cambia en cada ejecución
-        df = pd.read_csv(filepath)
-        if "fecha_extraccion" in df.columns:
-            df = df.drop(columns=["fecha_extraccion"])
+        # Instanciar el reporter con ruta dummy para extraer los datos normalizados
+        reporter = JamundiBoletinReporter(filepath, "dummy.pdf")
+        df = reporter._load_data()
+        reporter._detect_years(df)
+        reporter._detect_corte_month(df)
+        indicadores = reporter._extract_indicadores(df)
         
-        # Ordenar los datos para garantizar un hash consistente e independiente del orden de filas
-        df_sorted = df.sort_values(by=list(df.columns)).reset_index(drop=True)
+        # Estructura limpia y determinista con los datos estadísticos exactos del boletín
+        stats_data = {
+            "current_year": str(reporter.current_year),
+            "prev_year": str(reporter.prev_year),
+            "corte_month": int(reporter.corte_month),
+            "latest_date_str": str(reporter.latest_date_str),
+            "indicadores": [
+                {
+                    "name": str(ind["name"]),
+                    "current": int(ind["current"]),
+                    "prev": int(ind["prev"]),
+                    "diff": int(ind["diff"]),
+                    "var": str(ind["var"])
+                }
+                for ind in indicadores
+            ]
+        }
         
-        # Calcular MD5 sobre la representación en texto de los datos puros
-        data_str = df_sorted.to_string(index=False)
+        # Serializar de forma ordenada a JSON y calcular hash
+        data_str = json.dumps(stats_data, sort_keys=True)
+        logger.debug(f"Datos estadísticos normalizados para hash: {data_str}")
         return hashlib.md5(data_str.encode('utf-8')).hexdigest()
     except FileNotFoundError:
         return None
     except Exception as e:
-        logger.error(f"Error al calcular el hash de datos: {e}")
+        logger.error(f"Error al calcular el hash estadístico de los datos: {e}")
         return None
 
 def main():

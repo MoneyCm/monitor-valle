@@ -43,13 +43,14 @@ jobs:
         run: |
           python -m src.pipelines.run_full_extract --full
 
-      - name: Generate PDF Report
-        run: |
-          python -m src.reporting.generate_pdf_report
-
       - name: Check for Data Updates
         run: |
           python -m src.reporting.check_changes
+
+      - name: Generate PDF Report
+        if: env.DATA_CHANGED == 'true'
+        run: |
+          python -m src.reporting.generate_pdf_report
 
       - name: Send Email Report
         if: env.DATA_CHANGED == 'true'
