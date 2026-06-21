@@ -1,3 +1,9 @@
+"""Scraper de datos de Looker Studio embebido en el portal del Observatorio.
+
+Extrae datos analiticos mediante dos estrategias paralelas:
+1. Interceptacion de respuestas XHR (JSON interno de Looker)
+2. Exportacion CSV via UI (3 puntos -> Exportar -> CSV)
+"""
 import json
 import asyncio
 import re
@@ -8,19 +14,23 @@ from src.core.config import settings
 from src.core.logging_config import logger
 from src.core.utils import save_json
 
+
 class LookerStudioScraper:
-    """Extracts analytical data from Looker Studio using direct Export interaction and XHR interception."""
+    """Extrae datos de Looker Studio usando exportacion directa e interceptacion XHR."""
     
     def __init__(self, page: Page):
         self.page = page
         self.settings = settings
+        self.municipio = settings.obs_municipio
+        self.municipio_prefix = self.municipio.lower()[:6]  # "jamund" para busqueda UI
+        self.municipio_slug = settings.municipio_slug
         self.captured_requests: List[Dict[str, Any]] = []
         self.captured_responses: List[Dict[str, Any]] = [] 
         self.exported_files: List[Path] = []
-        self.current_year_focus = "Initial" # Changed from Historical to Initial
+        self.current_year_focus = "Initial"
 
     async def _handle_request(self, request: Request):
-        """Intercepts all requests for discovery/tracing. Handles binary post_data safely."""
+        """Intercepta todas las solicitudes para discovery/tracing."""
         if "google" in request.url:
             post_data = None
             try:
@@ -37,14 +47,14 @@ class LookerStudioScraper:
             })
 
     async def _handle_response(self, response: Response):
-        """Intercepts XHR responses containing the actual data blocks."""
+        """Intercepta respuestas XHR que contienen los bloques de datos reales."""
         is_looker_data = "google" in response.url and ("get_data" in response.url or "batchedData" in response.url)
         
         if is_looker_data:
             try:
                 if response.status == 200:
                     text = await response.text()
-                    # Google often prefixes JSON with )]}' to prevent XSSI
+                    # Google a menudo prefija JSON con )]}' para prevenir XSSI
                     if text.startswith(")]}'"):
                         text = text[4:].strip()
                     
@@ -54,68 +64,61 @@ class LookerStudioScraper:
                         "data": payload,
                         "year_tag": self.current_year_focus
                     })
-                    logger.success(f"Captured data block ({len(text)} bytes) from {response.url[:50]}... (Total: {len(self.captured_responses)})")
+                    logger.success(f"Bloque de datos capturado ({len(text)} bytes) de {response.url[:50]}... (Total: {len(self.captured_responses)})")
             except Exception as e:
-                logger.warning(f"Could not parse response from {response.url[:30]}: {str(e)}")
+                logger.warning(f"No se pudo parsear respuesta de {response.url[:30]}: {str(e)}")
 
     async def trigger_export(self) -> Optional[Path]:
-        """Automates the '3-dots -> Export -> CSV' flow using Frame Locator with strict mode fixes."""
-        logger.info("Attempting to trigger CSV Export from Looker Studio UI...")
+        """Automatiza el flujo '3 puntos -> Exportar -> CSV' usando Frame Locator."""
+        logger.info("Intentando exportar CSV desde la UI de Looker Studio...")
         
-        # 1. Use Frame Locator to target the Looker Studio iframe (cross-origin safe)
         looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
         
         try:
-            # 2. Fix 'Strict Mode Violation': Target only the HEADING for the table title
-            # This identifies the specific table container reliably.
-            logger.debug("Waiting for specific table heading...")
-            table_heading = looker_frame.get_by_role("heading", name="Casos por Año y Mes").first
+            # Apuntar al heading de la tabla para identificar el contenedor
+            logger.debug("Esperando heading especifico de tabla...")
+            table_heading = looker_frame.get_by_role("heading", name="Casos por Ano y Mes").first
             await table_heading.wait_for(state="visible", timeout=45000)
             
-            # 3. Identify and hover the specific table container
-            # We look for the main visualization container containing our heading
             await table_heading.hover()
-            await asyncio.sleep(5) # Aumentado de 2 a 5
+            await asyncio.sleep(4)
             
-            # 4. Find the 'More Options' (3 dots) button
-            # Looker Studio typically uses an icon with 'more_vert' or specific aria labels for the table menu
+            # Boton 'Mas Opciones' (3 puntos)
             menu_btn = looker_frame.locator('button[aria-label*="opciones"], button[aria-label*="options"], .flyout-menu-button, button:has(i:has-text("more_vert")), button:has(span:has-text("more_vert"))').first
-            await menu_btn.wait_for(state="visible", timeout=20000) # Espera explícita a que sea visible
-            await menu_btn.click(timeout=20000) # Aumentado de 10000 a 20000
-            logger.debug("Table context menu opened.")
-            await asyncio.sleep(3) # Aumentado de 2 a 3
+            await menu_btn.wait_for(state="visible", timeout=20000)
+            await menu_btn.click(timeout=20000)
+            logger.debug("Menu contextual de tabla abierto.")
+            await asyncio.sleep(2)
             
-            # 5. Select 'Exportar' from the dropdown
+            # Seleccionar 'Exportar' del dropdown
             export_item = looker_frame.locator('text="Exportar", text="Export", .mat-menu-item').first
             await export_item.wait_for(state="visible", timeout=10000)
             await export_item.click(timeout=10000)
-            logger.debug("Export dialog triggered.")
-            await asyncio.sleep(5) # Aumentado de 2 a 5 para el diálogo
+            logger.debug("Dialogo de exportacion activado.")
+            await asyncio.sleep(4)
             
-            # 6. Final confirmation in the Looker dialog
+            # Confirmacion final en el dialogo de Looker
             async with self.page.expect_download(timeout=60000) as download_info:
-                # Target the 'EXPORTAR' button in the popup dialog (which is also inside the frame)
                 await looker_frame.locator('button:has-text("EXPORTAR"), button:has-text("EXPORT")').last.click(timeout=10000)
             
             download = await download_info.value
-            save_path = self.settings.raw_dir / f"looker_export_jamundi_{download.suggested_filename}"
+            save_path = self.settings.raw_dir / f"looker_export_{self.municipio_slug}_{download.suggested_filename}"
             await download.save_as(save_path)
             
-            logger.success(f"Looker data exported successfully to {save_path}")
+            logger.success(f"Datos de Looker exportados exitosamente a {save_path}")
             self.exported_files.append(save_path)
             return save_path
             
         except Exception as e:
-            logger.warning(f"UI export interaction failed: {str(e)}.")
-            # Screenshot of the failure
+            logger.warning(f"La interaccion de exportacion UI fallo: {str(e)}.")
             await self.page.screenshot(path=str(self.settings.logs_dir / "export_failure_report.png"))
             return None
 
     async def extract_dashboard_data(self) -> Dict[str, Any]:
-        """Main entry point for Looker data extraction."""
-        # 0. Start from Home to fulfill "click the button" requirement
+        """Punto de entrada principal para la extraccion de datos de Looker."""
+        # 0. Iniciar desde Home para cumplir requisito de "click en boton"
         home_url = f"{self.settings.obs_url}/home"
-        logger.info(f"Navigating to Home to start via 'Informe Alcaldes' button: {home_url}")
+        logger.info(f"Navegando a Home para iniciar via boton 'Informe Alcaldes': {home_url}")
         
         self.page.on("request", self._handle_request)
         self.page.on("response", self._handle_response)
@@ -123,31 +126,35 @@ class LookerStudioScraper:
         await self.page.goto(home_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("networkidle")
         
-        # 1. Click 'Informe Alcaldes' button
+        # 1. Click en 'Informe Alcaldes'
         try:
-            logger.info("Clicking 'Informe Alcaldes' button...")
+            logger.info("Click en boton 'Informe Alcaldes'...")
             btn = self.page.get_by_role("link", name="Informe Alcaldes").first
             await btn.click(timeout=10000)
             await self.page.wait_for_load_state("networkidle")
-            logger.success(f"Reached dashboard: {self.page.url}")
+            logger.success(f"Alcanzado dashboard: {self.page.url}")
         except Exception as e:
-            logger.warning(f"Failed to click button, navigating directly to {self.settings.obs_alcalde_url}. Error: {e}")
+            logger.warning(f"Fallo al click en boton, navegando directamente a {self.settings.obs_alcalde_url}. Error: {e}")
             await self.page.goto(self.settings.obs_alcalde_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
 
-        # 2. Wait for Looker Studio to initialize
+        # 2. Esperar inicializacion de Looker Studio
         try:
             await self.page.wait_for_load_state("load", timeout=60000)
-            logger.info("Waiting 20s for Looker JS/Iframes to fully initialize...")
-            await asyncio.sleep(20) 
-        except:
-            logger.warning("Load state timeout exceeded, proceeding with best-effort capture.")
+            looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
+            # Esperar a que los controles del iframe esten visibles
+            looker_frame.locator('.lego-control').first.wait_for(state="visible", timeout=30000)
+            logger.info("Looker Studio inicializado correctamente.")
+            await asyncio.sleep(5)
+        except Exception:
+            logger.warning("Timeout esperando carga completa de Looker, procediendo con mejor esfuerzo.")
+            await asyncio.sleep(5)
 
         looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
 
-        # PHASE 2: Ensure Municipality filter is set to Jamundí
-        logger.info(f"Ensuring Municipality filter is set to {self.settings.obs_municipio}...")
+        # FASE 2: Asegurar filtro de municipio
+        logger.info(f"Asegurando filtro de municipio para {self.municipio}...")
         try:
-            # 1. Open the filter
+            # 1. Abrir el filtro
             municipio_trigger = looker_frame.locator('div:has-text("MUNICIPIO"), div:has-text("Municipio"), .lego-control').filter(has_text=re.compile(r"MUNICIPIO|Municipio", re.I)).last
             
             await municipio_trigger.hover()
@@ -155,136 +162,121 @@ class LookerStudioScraper:
             await municipio_trigger.click(force=True)
             await asyncio.sleep(3)
             
-            # 2. Search for Jamundí in the filter's internal search box
+            # 2. Buscar municipio en la caja de busqueda interna
             search_box = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"], input[type="text"]').first
             if await search_box.is_visible(timeout=5000):
-                await search_box.fill("Jamund")
+                await search_box.fill(self.municipio_prefix)
                 await asyncio.sleep(2)
 
-            # 3. Use 'Only' (Solo) to select only Jamundí
-            # This is CRITICAL to avoid aggregated data
-            jamundi_option = looker_frame.get_by_text("Jamund", exact=False).first
+            # 3. Usar 'Solamente' (Solo) para seleccionar solo el municipio
+            municipio_option = looker_frame.get_by_text(self.municipio_prefix.capitalize(), exact=False).first
             
-            # If the text-based locator isn't enough, try a combined one
-            if not await jamundi_option.is_visible(timeout=5000):
-                 jamundi_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(r"Jamund.*", re.I)).first
+            # Si el localizador por texto no es suficiente, intentar combinado
+            if not await municipio_option.is_visible(timeout=5000):
+                 municipio_option = looker_frame.locator('.ng2-menu-item, .mat-menu-item, div[role="option"]').filter(has_text=re.compile(rf"{re.escape(self.municipio_prefix)}.*", re.I)).first
             
-            if await jamundi_option.is_visible(timeout=5000):
-                logger.info("Found Jamundí option, attempting to click 'Solamente'...")
-                await jamundi_option.hover()
-                await asyncio.sleep(2)
+            if await municipio_option.is_visible(timeout=5000):
+                logger.info(f"Opcion de {self.municipio} encontrada, intentando click en 'Solamente'...")
+                await municipio_option.hover()
+                await asyncio.sleep(1)
 
-                # Look for 'Solamente' or 'Only' link that appears on hover
-                # In Looker Studio it is often an element that says "Solamente" next to the name
+                # Buscar link 'Solamente' que aparece al pasar el mouse
                 only_button = looker_frame.get_by_text("Solamente", exact=False).first
                 if not await only_button.is_visible(timeout=2000):
-                     only_button = jamundi_option.locator('span', has_text=re.compile(r"Solamente|Only|Solo", re.IGNORECASE)).first
+                     only_button = municipio_option.locator('span', has_text=re.compile(r"Solamente|Only|Solo", re.IGNORECASE)).first
                 
                 if await only_button.is_visible(timeout=3000):
-                    logger.info("Clicking 'Solamente' (Only) link to filter strictly.")
+                    logger.info("Click en 'Solamente' para filtrar estrictamente.")
                     await only_button.click(force=True)
-                    # REFUERZO: Limpiar todo lo capturado ANTES de este clic (que era el Valle completo)
+                    # Limpiar bloques capturados ANTES de este clic (datos globales del Valle)
                     await asyncio.sleep(5)
-                    logger.info("CLEANING: Discarding pre-filter global data blocks...")
+                    logger.info("LIMPIEZA: Descartando bloques de datos globales previos...")
                     self.captured_responses.clear()
                 else:
-                    logger.info("Selecting Jamundí option directly (check/toggle).")
-                    await jamundi_option.click(force=True)
+                    logger.info(f"Seleccionando opcion de {self.municipio} directamente (check/toggle).")
+                    await municipio_option.click(force=True)
                     await asyncio.sleep(5)
                     self.captured_responses.clear()
                 
-                logger.success(f"Municipality {self.settings.obs_municipio} selected.")
+                logger.success(f"Municipio {self.municipio} seleccionado.")
             else:
-                logger.warning(f"Could not find Jamundí option in the filter list.")
+                logger.warning(f"No se encontro la opcion de {self.municipio} en la lista de filtros.")
 
         except Exception as e:
-            logger.warning(f"Municipality filter selection issue: {str(e)}")
+            logger.warning(f"Problema con la seleccion de filtro de municipio: {str(e)}")
         finally:
             await self.page.keyboard.press("Escape")
             await asyncio.sleep(2)
 
-        # 3.5 Backup check: Some dashboards have a search-style filter for municipality
-        # If we see aggregated data, we try this alternative
-        # (This replaces the old failing force-toggle block)
-
-        # We DO NOT clear captured_responses anymore because we rely on the parser to filter.
-        # Instead, we wait a bit more to ensure all background data from the municipality selection is caught.
-        logger.info("Waiting 30s to ensure all filtered data blocks are captured...")
-        await asyncio.sleep(30)
+        # Esperar a que se capturen todos los bloques filtrados
+        logger.info("Esperando 15s para asegurar captura de bloques filtrados...")
+        await asyncio.sleep(15)
         
-        # 4. Sequential selection of years to get detailed breakdowns
+        # 4. Seleccion secuencial de anos para desgloses detallados
         years_to_capture = ["2024", "2025", "2026"]
-        logger.info(f"Starting year-by-year extraction for {years_to_capture}...")
+        logger.info(f"Iniciando extraccion ano por ano para {years_to_capture}...")
         
         for year in years_to_capture:
             try:
                 self.current_year_focus = year 
-                logger.info(f"Filtering by Year: {year}...")
+                logger.info(f"Filtrando por Ano: {year}...")
                 
-                # Use a very specific selector for the button to avoid tooltips
-                # Looker Studio filters are typically button.lego-control
-                # We use a more flexible text match for AÑO/Año
-                anio_trigger = looker_frame.locator('button.lego-control').filter(has_text=re.compile(r"AÑO|Año", re.I)).first
+                anio_trigger = looker_frame.locator('button.lego-control').filter(has_text=re.compile(r"ANO|Ano", re.I)).first
                 
-                # Check visibility and click
                 if await anio_trigger.is_visible(timeout=10000):
                     await anio_trigger.hover()
                     await asyncio.sleep(1)
                     await anio_trigger.click(force=True, timeout=10000)
                 else:
-                    # Fallback to coordinate-based or generic text if locator fails
-                    logger.warning(f"Button 'AÑO' not directly visible for year {year}, trying generic text click...")
-                    target = looker_frame.get_by_text("AÑO", exact=False).first
+                    logger.warning(f"Boton 'ANO' no visible directamente para ano {year}, intentando click generico...")
+                    target = looker_frame.get_by_text("ANO", exact=False).first
                     await target.hover()
                     await target.click(force=True, timeout=10000)
                 
-                await asyncio.sleep(5)
-                
-                # Use the same 'Solamente' strategy for Year
-                logger.info(f"Applying robust filter for year: {year}")
-                
-                # JS-based Click to avoid overlays on the trigger
-                await anio_trigger.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
                 await asyncio.sleep(4)
                 
-                # Search year
+                logger.info(f"Aplicando filtro robusto para ano: {year}")
+                
+                # Click JS para evitar overlays
+                await anio_trigger.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
+                await asyncio.sleep(3)
+                
+                # Buscar ano
                 search_box_year = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"], input[type="text"]').first
                 if await search_box_year.is_visible(timeout=5000):
                     await search_box_year.fill(year)
                     await asyncio.sleep(2)
                 
-                # Find the option and click 'Solamente' using JS to avoid hover issues
+                # Encontrar opcion y click en 'Solamente' via JS
                 year_option = looker_frame.get_by_text(year, exact=True).first
                 if await year_option.is_visible(timeout=5000):
-                    logger.info(f"Found option {year}, triggering Solamente via JS...")
+                    logger.info(f"Opcion {year} encontrada, activando Solamente via JS...")
                     
-                    # Try to find the 'Solamente' button by text nearby or within the same row
                     only_btn_year = looker_frame.get_by_text("Solamente", exact=False).first
                     if await only_btn_year.is_visible(timeout=3000):
                          await only_btn_year.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
                     else:
-                         # Fallback: click the year directly via JS
                          await year_option.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
                     
                     await asyncio.sleep(3)
                     await self.page.keyboard.press("Escape")
                 else:
-                    logger.warning(f"Year option {year} not found in dropdown")
+                    logger.warning(f"Opcion de ano {year} no encontrada en dropdown")
                 
-                logger.info(f"Waiting 25s for {year} data refresh...")
-                await asyncio.sleep(25) 
+                logger.info(f"Esperando 15s para refresh de datos de {year}...")
+                await asyncio.sleep(15)
                 
-                logger.success(f"Captured data sequence for {year}")
+                logger.success(f"Secuencia de datos capturada para {year}")
                 await self.page.keyboard.press("Escape")
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
             except Exception as e:
-                logger.warning(f"Failed to filter for year {year}: {str(e)}")
+                logger.warning(f"Fallo al filtrar ano {year}: {str(e)}")
                 await self.page.screenshot(path=str(self.settings.logs_dir / f"failure_year_{year}.png"))
 
-        # Save collective raw responses for the parser
+        # Guardar respuestas crudas colectivas
         save_json(self.captured_responses, self.settings.raw_dir / "captured_responses.json")
         
-        # Try direct export (as backup)
+        # Intentar exportacion directa (respaldo)
         csv_path = await self.trigger_export()
         
         return {

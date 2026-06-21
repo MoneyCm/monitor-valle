@@ -1,22 +1,37 @@
+"""Parser especializado para el formato columnar JSON de Google Looker Studio.
+
+Reconstruye filas a partir de datos columnares, filtra por municipio
+y detecta bloques globales (agregados del departamento).
+"""
 import datetime
 import json
 from typing import List, Dict, Any
 from src.core.logging_config import logger
 from src.core.utils import generate_record_hash
 
+
 class LookerAPIParser:
-    """Specialized parser for Google Looker Studio columnar JSON format."""
+    """Parser para respuestas de la API interna de Looker Studio."""
+
+    def __init__(self, municipio: str = "Jamundi"):
+        self.municipio = municipio
+        # Patron de busqueda flexible: primeros 6 caracteres sin acento
+        self.municipio_prefix = municipio.lower()[:6]
     
-    @staticmethod
-    def parse_response(data: Dict, year_tag: str = "Historical") -> List[Dict]:
-        """
-        Parses Google Looker Studio's columnar JSON format.
-        Reconstructs rows from column-wise data arrays.
+    def parse_response(self, data: Dict, year_tag: str = "Historical") -> List[Dict]:
+        """Parsea respuestas JSON de Looker Studio en formato columnar.
+
+        Args:
+            data: Payload JSON de Looker Studio.
+            year_tag: Etiqueta de ano para clasificar los registros.
+
+        Returns:
+            Lista de registros diccionario planos.
         """
         records = []
         
         try:
-            # Handle both direct list and dict with dataResponse/batchedData
+            # Manejar tanto lista directa como dict con dataResponse/batchedData
             responses = []
             if isinstance(data, list):
                 responses = data
@@ -24,13 +39,13 @@ class LookerAPIParser:
                 responses = data.get("dataResponse") or data.get("batchedData") or []
 
             for resp in responses:
-                # ROLE CHECK: ONLY take 'main' data to avoid double-counting with totals/rollups
+                # CHECK DE ROL: Solo tomar datos 'main' para evitar doble conteo con totales
                 role = resp.get("role", "main")
                 if role != "main":
-                    logger.debug(f"Skipping non-main response with role: {role}")
+                    logger.debug(f"Omitiendo respuesta con rol: {role}")
                     continue
 
-                # Navigate to the dataset (Columnar Format V2)
+                # Navegar al dataset (Formato Columnar V2)
                 subsets = resp.get("dataSubset") or []
                 
                 for subset in subsets:
@@ -39,7 +54,7 @@ class LookerAPIParser:
                     if not columns:
                         continue
                     
-                    # Extract values from all columns
+                    # Extraer valores de todas las columnas
                     col_data = []
                     for col in columns:
                         val_key = next((k for k in col.keys() if k.endswith("Column")), None)
@@ -49,70 +64,68 @@ class LookerAPIParser:
                     if not col_data:
                         continue
                         
-                    # Reconstruct rows by transposing columns
+                    # Reconstruir filas transponiendo columnas
                     num_rows = len(col_data[0])
                     
-                    # Identify if any column contains municipality information to filter strictly
+                    # Identificar columna que contiene informacion de municipio
                     municipio_col_idx = -1
                     for idx, values in enumerate(col_data):
-                        unique_vals = set(str(v) for v in values if v is not None)
-                        if "Jamundí" in unique_vals or "JAMUNDÍ" in unique_vals:
+                        unique_vals = set(str(v).lower() for v in values if v is not None)
+                        if any(self.municipio.lower() in v or self.municipio_prefix in v for v in unique_vals):
                             municipio_col_idx = idx
                             break
-
+                    
                     is_compare = subset.get("isCompare", False)
                     compare_idx = subset.get("viewTags", {}).get("compareIndex", 0)
                     
                     if is_compare or compare_idx > 0:
-                        logger.debug(f"Parsing comparison data: is_compare={is_compare}, compare_idx={compare_idx}, rows={num_rows}")
+                        logger.debug(f"Parseando datos de comparacion: is_compare={is_compare}, compare_idx={compare_idx}, filas={num_rows}")
 
-                    # SANITY CHECK: Detect global Valle del Cauca blocks by value magnitude
-                    # In Jamundí, homicide/extortion totals are never > 500 per year. 
-                    # If we see thousands, it's a global block.
+                    # CHECK DE SANIDAD: Detectar bloques globales por magnitud
+                    # Los totales del Valle del Cauca exceden 800, Jamundi no
                     is_global_block = False
                     for idx, values in enumerate(col_data):
-                        # Check numeric columns for suspicious magnitudes
                         try:
                             numeric_vals = [float(v) for v in values if str(v).replace('.','',1).isdigit()]
-                            if any(v > 800 for v in numeric_vals): # Threshold for global data
+                            if any(v > 800 for v in numeric_vals):
                                 is_global_block = True
                                 break
-                        except:
+                        except (TypeError, ValueError):
                             continue
                     
                     if is_global_block:
-                        logger.debug(f"Discarding global data block (suspiciously high values).")
+                        logger.debug("Descartando bloque de datos globales (valores sospechosamente altos).")
                         continue
 
                     for i in range(num_rows):
-                        # Strict filtering: ONLY if we found a municipality column
+                        # Filtrado estricto: solo si se encontro columna de municipio
                         if municipio_col_idx != -1:
-                            val = str(col_data[municipio_col_idx][i]) if i < len(col_data[municipio_col_idx]) else ""
-                            if "Jamund" not in val:
+                            val = str(col_data[municipio_col_idx][i]).lower() if i < len(col_data[municipio_col_idx]) else ""
+                            if self.municipio_prefix not in val:
                                 continue
-                        # If no column found, we assume the scraper already filtered the session
-
+                        # Si no se encontro columna, se asume que el scraper ya filtro
+                        
                         record = {
                             "fecha_extraccion": datetime.datetime.now().isoformat(),
                             "fuente": "API Interna (Looker Studio)",
-                            "municipio": "Jamundí",
+                            "municipio": self.municipio,
                             "metodo_extraccion": "API_INTERNA_COLUMNAR",
                             "is_compare": subset.get("isCompare", False),
                             "compare_index": subset.get("viewTags", {}).get("compareIndex", 0)
                         }
                         
-                        # Add generic columns
+                        # Agregar columnas genericas
                         for col_idx, values in enumerate(col_data):
                             val = values[i] if i < len(values) else None
                             record[f"col_{col_idx}"] = val
                         
-                        # Inject Year Tag for filtering context
+                        # Inyectar etiqueta de ano para contexto de filtrado
                         record["col_9"] = year_tag
                         
                         record["hash_registro"] = generate_record_hash(record)
                         records.append(record)
             
-            # Fallback for older format if no records found
+            # Fallback para formato antiguo si no se encontraron registros
             if not records and isinstance(data, dict):
                 for resp in responses:
                     role = resp.get("role", "main")
@@ -127,7 +140,7 @@ class LookerAPIParser:
                             record = {
                                 "fecha_extraccion": datetime.datetime.now().isoformat(),
                                 "fuente": "API Interna (Looker Studio)",
-                                "municipio": "Jamundí"
+                                "municipio": self.municipio
                             }
                             for i, cell in enumerate(cells):
                                 record[f"col_{i}"] = cell.get("v") if isinstance(cell, dict) else cell
@@ -137,13 +150,15 @@ class LookerAPIParser:
                             records.append(record)
 
         except Exception as e:
-            logger.error(f"Failed to parse Looker Response: {str(e)}")
+            logger.error(f"Error al parsear respuesta de Looker: {str(e)}")
             
         return records
 
-    def _safe_get(self, cells: List, index: int, default: Any = "") -> Any:
+    @staticmethod
+    def _safe_get(cells: List, index: int, default: Any = "") -> Any:
+        """Obtiene un valor de celda de forma segura."""
         try:
             val = cells[index].get("v") if isinstance(cells[index], dict) else cells[index]
             return val if val is not None else default
-        except:
+        except (IndexError, TypeError, KeyError):
             return default

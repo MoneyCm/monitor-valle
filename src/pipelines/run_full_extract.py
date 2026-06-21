@@ -1,3 +1,7 @@
+"""Pipeline principal de extraccion completa de datos.
+
+Orquesta: autenticacion -> descubrimiento -> extraccion Looker -> consolidacion.
+"""
 import asyncio
 import sys
 import argparse
@@ -14,83 +18,82 @@ from src.pipelines.consolidate import ConsolidationPipeline
 from src.core.utils import save_json
 
 async def run_pipeline(args):
-    """Orchestrates the full data extraction lifecycle with mandatory validation."""
-    logger.info("ENVIRONMENT: Production-ready Data Extractor (Correction Total)")
+    """Orquesta el ciclo completo de extraccion de datos con validacion obligatoria."""
+    logger.info("ENTORNO: Extractor de datos listo para produccion")
     
     auth_mgr = AuthManager()
     extraction_report = {
         "timestamp": datetime.datetime.now().isoformat(),
-        "status": "RUNNING",
-        "phases_completed": []
+        "status": "EN_EJECUCION",
+        "fases_completadas": []
     }
     
     async with async_playwright() as pw:
-        # 1. Login (Mandatory)
+        # 1. Autenticacion (Obligatorio)
         try:
             page = await auth_mgr.login(pw)
-            logger.success("PHASE 1: Authentication Successful.")
-            extraction_report["phases_completed"].append("AUTH")
+            logger.success("FASE 1: Autenticacion exitosa.")
+            extraction_report["fases_completadas"].append("AUTH")
         except Exception as e:
-            logger.critical(f"PIPELINE BLOCKED: Login Failed. {str(e)}")
-            extraction_report["status"] = "FAILED_AUTH"
+            logger.critical(f"PIPELINE BLOQUEADO: Login fallido. {str(e)}")
+            extraction_report["status"] = "FALLO_AUTH"
             save_json(extraction_report, settings.final_dir / "pipeline_report.json")
             sys.exit(1)
 
-        # 2. Site Discovery (Mandatory)
-        logger.info("PHASE 2: Mandatory Site Discovery...")
+        # 2. Descubrimiento del sitio (Obligatorio)
+        logger.info("FASE 2: Descubrimiento del sitio...")
         discovery = SiteDiscovery(page)
         routes = await discovery.discover_modules()
-        extraction_report["phases_completed"].append("DISCOVERY")
+        extraction_report["fases_completadas"].append("DISCOVERY")
         save_json(routes, settings.raw_dir / "discovered_routes.json")
 
-        # 3. Data Extraction (Analytical Looker Studio)
-        logger.info("PHASE 3: Analytical Looker Studio Extraction...")
+        # 3. Extraccion de datos (Looker Studio)
+        logger.info("FASE 3: Extraccion analitica de Looker Studio...")
         looker = LookerStudioScraper(page)
         result = await looker.extract_dashboard_data()
-        extraction_report["phases_completed"].append("LOOKER_EXTRACTION")
+        extraction_report["fases_completadas"].append("LOOKER_EXTRACTION")
         extraction_report["looker_result"] = result
 
-        # 4. Reports Extraction (Secondary)
+        # 4. Extraccion de reportes (Secundario)
         if not args.dashboard_only:
-            logger.info("PHASE 4: Supplementary Reports Extraction...")
+            logger.info("FASE 4: Extraccion complementaria de reportes...")
             reports = ReportsScraper(page)
             await reports.scrape_all_reports()
-            extraction_report["phases_completed"].append("REPORTS_CRAWLER")
+            extraction_report["fases_completadas"].append("REPORTS_CRAWLER")
             
-        # 5. Cleanup Browser
+        # 5. Cierre del navegador
         await auth_mgr.close()
 
-    # 6. Consolidation & Strict Validation (CRITICAL)
-    logger.info("PHASE 5: Consolidation & Strict Analytical Validation...")
+    # 6. Consolidacion y validacion (CRITICO)
+    logger.info("FASE 5: Consolidacion y validacion analitica...")
     consolidator = ConsolidationPipeline()
     try:
         report = consolidator.run()
-        logger.success("PIPELINE SUCCESS: All validation criteria met.")
-        extraction_report["status"] = "SUCCESS"
+        logger.success("PIPELINE EXITOSO: Todos los criterios de validacion cumplidos.")
+        extraction_report["status"] = "EXITO"
         extraction_report["coverage"] = report
     except RuntimeError as re:
-        logger.error(f"VALORACIÓN DE DATOS FALLIDA: {str(re)}")
-        extraction_report["status"] = "FAILED_VALIDATION"
+        logger.error(f"VALIDACION DE DATOS FALLIDA: {str(re)}")
+        extraction_report["status"] = "FALLO_VALIDACION"
         extraction_report["error_detail"] = str(re)
-        # Ensure we block the pipeline (exit with error)
         save_json(extraction_report, settings.final_dir / "pipeline_report.json")
         sys.exit(1)
         
     save_json(extraction_report, settings.final_dir / "pipeline_report.json")
-    logger.info(f"Full report generated at: {settings.final_dir / 'pipeline_report.json'}")
+    logger.info(f"Reporte completo generado en: {settings.final_dir / 'pipeline_report.json'}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Jamundí Data Extractor Pipeline")
-    parser.add_argument("--discover", action="store_true", help="Only run site discovery")
-    parser.add_argument("--full", action="store_true", default=True, help="Full extraction (Default)")
-    parser.add_argument("--dashboard-only", action="store_true", help="Extract only from Looker Dashboard")
+    parser = argparse.ArgumentParser(description=f"Pipeline de extraccion de datos - {settings.obs_municipio}")
+    parser.add_argument("--discover", action="store_true", help="Solo ejecutar descubrimiento del sitio")
+    parser.add_argument("--full", action="store_true", default=True, help="Extraccion completa (por defecto)")
+    parser.add_argument("--dashboard-only", action="store_true", help="Extraer solo desde Looker Dashboard")
     
     args = parser.parse_args()
     
     try:
         asyncio.run(run_pipeline(args))
     except KeyboardInterrupt:
-        logger.warning("Pipeline execution interrupted by user.")
+        logger.warning("Ejecucion del pipeline interrumpida por el usuario.")
         sys.exit(1)
     except Exception as e:
         logger.exception(f"FATAL: {str(e)}")

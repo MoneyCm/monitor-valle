@@ -21,7 +21,7 @@ class CaptureMode:
             post_data = None
             try:
                 post_data = request.post_data
-            except:
+            except Exception:
                 pass
 
             req_data = {

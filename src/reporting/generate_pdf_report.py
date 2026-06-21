@@ -1,21 +1,20 @@
 """
-Generador del Boletín Estadístico de Seguridad y Convivencia - Jamundí.
-Diseño institucional (azul/amarillo) replicando el boletín de plataforma-seguridad.
-Datos extraídos automáticamente del Observatorio del Delito Valle.
+Generador del Boletin Estadistico de Seguridad y Convivencia.
+Diseno institucional (azul/amarillo) replicando el boletin de plataforma-seguridad.
+Datos extraidos automaticamente del Observatorio del Delito Valle.
 """
 import os
 import datetime
 from pathlib import Path
 
-import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from fpdf import FPDF
 
+from src.reporting.data_analyzer import DataAnalyzer
+from src.reporting.chart_generator import ChartGenerator
 
-class JamundiBoletinReporter:
-    """Genera un PDF de 2 páginas con diseño institucional a partir del CSV maestro."""
+
+class BoletinReporter:
+    """Genera un PDF de 2 paginas con diseno institucional a partir del CSV maestro."""
 
     # --- Paleta institucional (RGB 0-255) ---
     COLOR_AZUL = (0, 51, 160)          # #0033A0 - primario
@@ -32,27 +31,16 @@ class JamundiBoletinReporter:
     COLOR_AZUL_FONDO = (239, 246, 255) # bg-blue-50
     COLOR_AZUL_BORDE = (219, 234, 254) # border-blue-100
 
-    FUENTE_OBSERVATORIO = "Observatorio del Delito Valle (www.observatoriodeldelitovalle.co)"
-
-    DELITOS = [
-        "Homicidio", "Lesiones Personales", "Hurto Personas", "Hurto Motocicletas",
-        "Hurto Automotores", "Extorsión", "Violencia Intrafamiliar",
-        "Hurto Entidades Comerciales", "Hurto Residencias",
-        "Acceso Carnal O Acto Sexual Violento",
-        "Actos Sexuales Con Menor De 14 Años",
-        "Secuestro",
-    ]
-
-    def __init__(self, csv_path, output_path, escudo_path=None):
+    def __init__(self, csv_path, output_path, escudo_path=None, municipio=None):
         self.csv_path = Path(csv_path)
         self.output_path = Path(output_path)
         self.escudo_path = Path(escudo_path) if escudo_path else None
+        self.municipio = municipio or "Jamundi"
         self.temp_dir = self.output_path.parent / "temp_boletin"
         self.temp_dir.mkdir(exist_ok=True)
 
-        self.current_year = None
-        self.prev_year = None
-        self.latest_date_str = ""
+        # Analizador de datos (composicion)
+        self.analyzer = DataAnalyzer(self.csv_path, municipio=self.municipio)
 
     # ================================================================
     #  UTILIDADES
@@ -68,186 +56,10 @@ class JamundiBoletinReporter:
         pdf.set_text_color(*color)
 
     # ================================================================
-    #  EXTRACCIÓN DE DATOS
-    # ================================================================
-    def _load_data(self):
-        df = pd.read_csv(self.csv_path, encoding="utf-8-sig")
-        df['col_1'] = pd.to_numeric(df['col_1'], errors='coerce').fillna(0)
-        df['col_9'] = df['col_9'].astype(str).str.strip()
-        return df
-
-    def _detect_years(self, df):
-        """Detecta el año más reciente y el anterior."""
-        years = sorted(df['col_9'].unique(), reverse=True)
-        years = [y for y in years if y.isdigit()]
-        self.current_year = years[0] if years else str(datetime.datetime.now().year)
-        self.prev_year = years[1] if len(years) > 1 else str(int(self.current_year) - 1)
-        return years
-
-    def _detect_corte_month(self, df):
-        """Detecta el último mes con datos mensuales en el año actual.
-
-        El Observatorio entrega filas donde col_0 es un número 1-12 (mes)
-        cuando is_compare=True, compare_index=1. Esas son las sumas mensuales.
-        """
-        monthly = df[
-            (df['col_9'] == str(self.current_year)) &
-            (df['is_compare'] == True) &
-            (df['compare_index'] == 1) &
-            (df['col_0'].astype(str).str.match(r'^\d+$', na=False))
-        ].copy()
-        if monthly.empty:
-            # Fallback: intentar detectar el mes a partir de las fechas YYYY-MM-DD en col_0 para el año actual
-            import re
-            dates = df[
-                (df['col_9'] == str(self.current_year)) & 
-                (df['col_0'].astype(str).str.match(r'^\d{4}-\d{2}-\d{2}$', na=False))
-            ]['col_0'].unique()
-            
-            parsed_dates = []
-            for d in dates:
-                try:
-                    parsed_dates.append(datetime.datetime.strptime(str(d), "%Y-%m-%d").date())
-                except Exception:
-                    pass
-            
-            if parsed_dates:
-                max_date = max(parsed_dates)
-                self.latest_date_str = max_date.strftime("%d/%m/%Y")
-                # Si el día del mes es menor a 15, consideramos que el mes está incompleto
-                # y retrocedemos al mes anterior para que la comparación sea justa
-                if max_date.day < 15:
-                    self.corte_month = max_date.month - 1 if max_date.month > 1 else 12
-                else:
-                    self.corte_month = max_date.month
-                self.corte_month_name = self._month_name(self.corte_month)
-                return self.corte_month
-
-            # Fallback secundario: usar el mes actual del sistema
-            self.corte_month = datetime.datetime.now().month
-            self.corte_month_name = self._month_name(self.corte_month)
-            self.latest_date_str = datetime.datetime.now().strftime("%d/%m/%Y")
-            return self.corte_month
-
-        months = pd.to_numeric(monthly['col_0'], errors='coerce').dropna().astype(int)
-        self.corte_month = int(months.max())
-        self.corte_month_name = self._month_name(self.corte_month)
-        import calendar
-        last_day = calendar.monthrange(int(self.current_year), self.corte_month)[1]
-        self.latest_date_str = f"{last_day:02d}/{self.corte_month:02d}/{self.current_year}"
-        return self.corte_month
-
-    @staticmethod
-    def _month_name(n):
-        """Convierte número de mes a abreviatura en español."""
-        meses = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
-                 7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
-        return meses.get(n, f'Mes {n}')
-
-    def _get_crime_ytd(self, df, delito, year, corte_month):
-        """Obtiene el acumulado YTD de un delito (enero hasta corte_month).
-
-        Si hay datos mensuales agregados (is_compare=True, compare_index=1),
-        proporciona el YTD escalando el total anual del delito por la proporción
-        de casos mensuales que ocurrieron hasta corte_month.
-        De lo contrario, utiliza el total anual del delito.
-        """
-        crime_total = self._get_crime_total(df, delito, year)
-        
-        monthly = df[
-            (df['col_9'] == str(year)) &
-            (df['is_compare'] == True) &
-            (df['compare_index'] == 1) &
-            (df['col_0'].astype(str).str.match(r'^\d+$', na=False))
-        ].copy()
-        monthly['mes'] = pd.to_numeric(monthly['col_0'], errors='coerce')
-
-        if monthly.empty:
-            return crime_total
-
-        total_ytd_all = int(monthly[(monthly['mes'] >= 1) & (monthly['mes'] <= corte_month)]['col_1'].sum())
-        total_full_all = int(monthly['col_1'].sum())
-        
-        if total_full_all > 0:
-            ratio = total_ytd_all / total_full_all
-            return int(round(crime_total * ratio))
-        else:
-            return crime_total
-
-    def _get_crime_total(self, df, delito, year):
-        """Obtiene el total anual de un delito (fallback sin datos mensuales)."""
-        mask = (df['col_0'].str.contains(delito, case=False, na=False)) & \
-               (df['col_9'] == str(year)) & \
-               (df['is_compare'] == False)
-        rows = df[mask]
-        if rows.empty:
-            return 0
-        return int(rows['col_1'].max())
-
-    def _extract_indicadores(self, df):
-        """Compara cada delito: YTD año actual vs YTD mismo periodo año anterior."""
-        results = []
-        for delito in self.DELITOS:
-            v_curr = self._get_crime_ytd(df, delito, self.current_year, self.corte_month)
-            v_prev = self._get_crime_ytd(df, delito, self.prev_year, self.corte_month)
-            diff = v_curr - v_prev
-            if v_prev > 0:
-                var_pct = ((v_curr - v_prev) / v_prev) * 100
-                var_str = f"{var_pct:+.1f}%"
-            else:
-                var_str = "+100%" if v_curr > 0 else "N/A"
-            results.append({
-                'name': delito, 'current': v_curr, 'prev': v_prev,
-                'diff': diff, 'var': var_str,
-            })
-        results.sort(key=lambda x: x['current'], reverse=True)
-        return results
-
-    def _calc_totals(self, indicadores):
-        """Suma los totales de todos los delitos por año."""
-        total_curr = sum(r['current'] for r in indicadores)
-        total_prev = sum(r['prev'] for r in indicadores)
-        return total_curr, total_prev
-
-    def _generate_chart(self, indicadores):
-        """Gráfica de barras agrupadas: año actual vs anterior (top 8 delitos)."""
-        top = indicadores[:8]
-        names = []
-        for r in top:
-            n = r['name']
-            if len(n) > 14:
-                n = n[:12] + ".."
-            names.append(n)
-        current = [r['current'] for r in top]
-        prev = [r['prev'] for r in top]
-
-        fig, ax = plt.subplots(figsize=(9, 3.8))
-        x = range(len(names))
-        bw = 0.35
-        ax.bar([i - bw / 2 for i in x], prev, bw,
-               label=f"{self.prev_year}", color='#A0AEC0')
-        ax.bar([i + bw / 2 for i in x], current, bw,
-               label=f"{self.current_year}", color='#0033A0')
-
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(names, rotation=25, ha='right', fontsize=8, color='#555')
-        ax.set_ylabel('Hechos delictivos', fontsize=9, color='#666')
-        ax.legend(fontsize=9, frameon=False)
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.tick_params(colors='#888')
-        ax.grid(axis='y', linestyle='--', alpha=0.25)
-        plt.tight_layout()
-        path = self.temp_dir / "evolucion.png"
-        plt.savefig(path, dpi=200, bbox_inches='tight')
-        plt.close()
-        return path
-
-    # ================================================================
     #  ELEMENTOS VISUALES (dibujo en el PDF)
     # ================================================================
     def _draw_header(self, pdf, large=True):
-        """Header con escudo + título + borde amarillo inferior."""
+        """Header con escudo + titulo + borde amarillo inferior."""
         page_w = pdf.w
         margin = 15
 
@@ -255,7 +67,7 @@ class JamundiBoletinReporter:
             escudo_h = 22
             escudo_w = 17
             title_size = 15
-            border_w = 1.8  # 6px aprox
+            border_w = 1.8
             gap = 5
         else:
             escudo_h = 12
@@ -266,14 +78,14 @@ class JamundiBoletinReporter:
 
         y_start = 15
 
-        # --- Lado izquierdo: escudo + título ---
+        # --- Lado izquierdo: escudo + titulo ---
         if self.escudo_path and self.escudo_path.exists():
             pdf.image(str(self.escudo_path),
                       x=margin, y=y_start, w=escudo_w, h=escudo_h)
 
         text_x = margin + escudo_w + gap
 
-        # Título principal
+        # Titulo principal
         pdf.set_xy(text_x, y_start)
         pdf.set_font("Helvetica", "B", title_size)
         pdf.set_text_color(*self.COLOR_AZUL)
@@ -287,11 +99,11 @@ class JamundiBoletinReporter:
             pdf.cell(0, 7, self._safe("BOLETIN ESTADISTICO DE SEGURIDAD Y CONVIVENCIA"),
                      new_x="LMARGIN", new_y="NEXT")
 
-        # Subtítulo
+        # Subtitulo
         pdf.set_x(text_x)
         pdf.set_font("Helvetica", "B", 7 if not large else 8)
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
-        pdf.cell(0, 4, self._safe("ALCALDIA MUNICIPAL DE JAMUNDI"),
+        pdf.cell(0, 4, self._safe(f"ALCALDIA MUNICIPAL DE {self.municipio.upper()}"),
                  new_x="LMARGIN", new_y="NEXT")
 
         # --- Lado derecho: fuente + corte ---
@@ -309,7 +121,7 @@ class JamundiBoletinReporter:
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
         fecha_corte = datetime.datetime.now().strftime("%d/%m/%Y")
         pdf.multi_cell(right_w, 4,
-                       self._safe(f"Corte: {fecha_corte}\nMunicipio: Jamundi"),
+                       self._safe(f"Corte: {fecha_corte}\nMunicipio: {self.municipio}"),
                        align="R")
 
         # --- Borde amarillo inferior ---
@@ -318,10 +130,10 @@ class JamundiBoletinReporter:
         pdf.set_line_width(border_w)
         pdf.line(margin, line_y, page_w - margin, line_y)
 
-        return line_y + 6  # Y donde empieza el contenido
+        return line_y + 6
 
     def _draw_section_title(self, pdf, y, number, title):
-        """Título de sección con borde amarillo izquierdo + texto azul."""
+        """Titulo de seccion con borde amarillo izquierdo + texto azul."""
         margin = 15
         bar_w = 1.5
         pdf.set_fill_color(*self.COLOR_AMARILLO)
@@ -336,15 +148,15 @@ class JamundiBoletinReporter:
 
     def _draw_kpi_card(self, pdf, x, y, w, h, accent_color, label, value, subtext=""):
         """Tarjeta KPI con borde superior de color y fondo premium destacado."""
-        # Detectar color de fondo y de texto del valor para destacar mejoras/empeoramientos
+        # Detectar color de fondo y de texto del valor
         if accent_color == self.COLOR_VERDE:
-            card_bg = (240, 253, 244) # emerald-50
-            border_color = (187, 247, 208) # green-200
-            val_color = (22, 101, 52) # dark green
+            card_bg = (240, 253, 244)
+            border_color = (187, 247, 208)
+            val_color = (22, 101, 52)
         elif accent_color == self.COLOR_ROJO:
-            card_bg = (254, 242, 242) # red-50
-            border_color = (254, 202, 202) # red-200
-            val_color = (153, 27, 27) # dark red
+            card_bg = (254, 242, 242)
+            border_color = (254, 202, 202)
+            val_color = (153, 27, 27)
         else:
             card_bg = self.COLOR_BLANCO
             border_color = self.COLOR_GRIS
@@ -381,14 +193,12 @@ class JamundiBoletinReporter:
             pdf.multi_cell(w - 2, 3, self._safe(subtext), align="C")
 
     def _draw_info_box(self, pdf, y, text, w=None):
-        """Caja de información con fondo azul claro."""
+        """Caja de informacion con fondo azul claro."""
         margin = 15
         if w is None:
             w = pdf.w - margin * 2
-        lines = pdf.get_string_width(text)  # rough
         # Estimar altura
         pdf.set_font("Helvetica", "", 8)
-        # Calcular líneas necesarias
         chars_per_line = int(w / 1.6)
         num_lines = max(1, len(text) / chars_per_line)
         box_h = num_lines * 4 + 6
@@ -400,18 +210,18 @@ class JamundiBoletinReporter:
 
         pdf.set_xy(margin + 2, y + 2)
         pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(30, 58, 138)  # blue-900
+        pdf.set_text_color(30, 58, 138)
         pdf.multi_cell(w - 4, 4, self._safe(text), align="L")
         return y + box_h + 4
 
     def _draw_footer(self, pdf, page_num):
-        """Footer fijo al pie de página."""
+        """Footer fijo al pie de pagina."""
         margin = 15
         page_w = pdf.w
         page_h = pdf.h
         y = page_h - 18
 
-        # Línea superior
+        # Linea superior
         pdf.set_draw_color(*self.COLOR_GRIS)
         pdf.set_line_width(0.2)
         pdf.line(margin, y, page_w - margin, y)
@@ -420,14 +230,14 @@ class JamundiBoletinReporter:
         pdf.set_font("Helvetica", "B", 7)
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
         pdf.cell(page_w - margin * 2, 5,
-                 self._safe(f"Fuente: {self.FUENTE_OBSERVATORIO}"),
+                 self._safe(f"Fuente: {self.analyzer.FUENTE_OBSERVATORIO}"),
                  align="L", new_x="LMARGIN", new_y="NEXT")
 
         pdf.set_xy(margin, y + 7)
         pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(*self.COLOR_GRIS)
         pdf.cell(page_w - margin * 2, 4,
-                 self._safe(f"Pagina {page_num}  |  Alcaldia Municipal de Jamundi"),
+                 self._safe(f"Pagina {page_num}  |  Alcaldia Municipal de {self.municipio}"),
                  align="R")
 
     def _draw_table(self, pdf, y, headers, rows, col_widths, col_aligns=None):
@@ -473,26 +283,21 @@ class JamundiBoletinReporter:
                 is_diff_col = headers[i].upper().startswith(('DIF', 'VAR'))
                 
                 if is_diff_col:
-                    # Parsear valor numérico (quita + y %)
                     try:
                         num_val = float(sval.lstrip('+').rstrip('%'))
                     except ValueError:
-                        num_val = 0  # "N/A" u otro texto
+                        num_val = 0
 
                     if num_val > 0:
-                        # Más delitos vs año anterior = ROJO (empeoró) - Badge rojo
-                        bg_color = (254, 226, 226) # light red (red-100)
-                        text_color = (153, 27, 27) # dark red (red-800)
+                        bg_color = (254, 226, 226)
+                        text_color = (153, 27, 27)
                     elif num_val < 0:
-                        # Menos delitos vs año anterior = VERDE (mejoró) - Badge verde
-                        bg_color = (220, 252, 231) # light green (green-100)
-                        text_color = (22, 101, 52) # dark green (green-800)
+                        bg_color = (220, 252, 231)
+                        text_color = (22, 101, 52)
                     else:
-                        # Sin cambios = gris neutro - Badge gris
-                        bg_color = (241, 245, 249) # light gray
-                        text_color = (71, 85, 105) # slate-600
+                        bg_color = (241, 245, 249)
+                        text_color = (71, 85, 105)
                     
-                    # Dibujar el badge (fondo redondeado/rectángulo lleno)
                     badge_w = col_widths[i] - 4
                     badge_h = row_h - 2
                     badge_x = x + 2
@@ -501,7 +306,6 @@ class JamundiBoletinReporter:
                     pdf.set_fill_color(*bg_color)
                     pdf.rect(badge_x, badge_y, badge_w, badge_h, style='F')
                     
-                    # Escribir el texto del valor encima del badge
                     pdf.set_xy(badge_x, badge_y + 0.5)
                     pdf.set_font("Helvetica", "B", 7.5)
                     pdf.set_text_color(*text_color)
@@ -525,14 +329,15 @@ class JamundiBoletinReporter:
         return y + 5
 
     # ================================================================
-    #  CONSTRUCCIÓN DEL PDF
+    #  CONSTRUCCION DEL PDF
     # ================================================================
     def create_boletin(self):
-        df = self._load_data()
-        self._detect_years(df)
-        self._detect_corte_month(df)
-        indicadores = self._extract_indicadores(df)
-        total_curr, total_prev = self._calc_totals(indicadores)
+        """Orquesta la generacion completa del boletin PDF de 2 paginas."""
+        df = self.analyzer.load_data()
+        self.analyzer.detect_years(df)
+        self.analyzer.detect_corte_month(df)
+        indicadores = self.analyzer.extract_indicadores(df)
+        total_curr, total_prev = self.analyzer.calc_totals(indicadores)
 
         # KPIs acumulados
         if total_prev > 0:
@@ -543,52 +348,55 @@ class JamundiBoletinReporter:
             var_ytd_str = "N/A"
             diff_ytd = 0
 
-        # Periodo más reciente aproximado (último mes con datos del año actual)
-        fecha_corte = datetime.datetime.now().strftime("%B %Y")
+        current_year = self.analyzer.current_year
+        prev_year = self.analyzer.prev_year
+        latest_date_str = self.analyzer.latest_date_str
 
-        # Generar gráfica
-        chart_path = self._generate_chart(indicadores)
+        # Generar grafica
+        chart_path = ChartGenerator.generate(
+            indicadores, current_year, prev_year, self.temp_dir
+        )
 
         # --- PDF ---
         pdf = FPDF(orientation='P', unit='mm', format='A4')
         pdf.set_auto_page_break(auto=False)
         pdf.set_margins(15, 15, 15)
 
-        # ===================== PÁGINA 1 =====================
+        # ===================== PAGINA 1 =====================
         pdf.add_page()
 
         # Header
         content_y = self._draw_header(pdf, large=True)
 
-        # --- Sección 1: Introducción ---
+        # --- Seccion 1: Introduccion ---
         content_y = self._draw_section_title(pdf, content_y, 1, "Introduccion y Alcance")
 
         pdf.set_xy(15, content_y)
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(*self.COLOR_TEXTO)
         intro = (f"El presente boletin presenta el analisis estadistico de los principales "
-                 f"delitos del municipio de Jamundi para el ano {self.current_year}, "
-                 f"comparado con el ano {self.prev_year}. Los datos fueron obtenidos "
+                 f"delitos del municipio de {self.municipio} para el ano {current_year}, "
+                 f"comparado con el ano {prev_year}. Los datos fueron obtenidos "
                  f"directamente del Observatorio del Delito Valle.")
         pdf.multi_cell(180, 5, self._safe(intro), align="J")
         content_y = pdf.get_y() + 3
 
-        # Caja de información
+        # Caja de informacion
         info = ("Lectura correcta: el Panorama General corresponde al acumulado "
-                f"del ano {self.current_year} hasta la fecha de corte, "
-                f"frente al mismo periodo del ano {self.prev_year}. "
+                f"del ano {current_year} hasta la fecha de corte, "
+                f"frente al mismo periodo del ano {prev_year}. "
                 f"Fuente: Observatorio del Delito Valle.")
         content_y = self._draw_info_box(pdf, content_y, info)
 
-        # --- Sección 2: Panorama General Acumulado ---
+        # --- Seccion 2: Panorama General Acumulado ---
         content_y = self._draw_section_title(pdf, content_y, 2, "Panorama General Acumulado")
 
         pdf.set_xy(15, content_y)
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
         pdf.multi_cell(180, 4,
-                       self._safe(f"Periodo acumulado comparado: ano {self.current_year} "
-                                  f"frente al ano {self.prev_year}."),
+                       self._safe(f"Periodo acumulado comparado: ano {current_year} "
+                                  f"frente al ano {prev_year}."),
                        align="L")
         content_y = pdf.get_y() + 3
 
@@ -602,21 +410,20 @@ class JamundiBoletinReporter:
 
         self._draw_kpi_card(pdf, start_x, content_y, card_w, card_h,
                             self.COLOR_AZUL,
-                            f"Total {self.prev_year}", f"{total_prev:,}", "Acumulado anual")
+                            f"Total {prev_year}", f"{total_prev:,}", "Acumulado anual")
         self._draw_kpi_card(pdf, start_x + card_w + card_gap, content_y, card_w, card_h,
                             self.COLOR_AZUL,
-                            f"Total {self.current_year}", f"{total_curr:,}", "Acumulado anual")
+                            f"Total {current_year}", f"{total_curr:,}", "Acumulado anual")
         self._draw_kpi_card(pdf, start_x + 2 * (card_w + card_gap), content_y, card_w, card_h,
                             var_color,
                             "Variacion acumulada", var_ytd_str, var_bg_note)
         content_y += card_h + 10
 
-        # --- Sección 3: Comportamiento por delito ---
+        # --- Seccion 3: Comportamiento por delito ---
         content_y = self._draw_section_title(pdf, content_y, 3,
-                                             f"Top 5 Delitos - {self.current_year}")
+                                             f"Top 5 Delitos - {current_year}")
 
         top5 = indicadores[:5]
-        # 5 tarjetas horizontales más pequeñas
         c5_w = 33
         c5_gap = 3
         c5_h = 28
@@ -626,48 +433,47 @@ class JamundiBoletinReporter:
             self._draw_kpi_card(pdf, cx, content_y, c5_w, c5_h,
                                 card_accent,
                                 item['name'][:18], f"{item['current']:,}",
-                                f"vs {item['prev']} ({item['var']})\nCorte: {self.latest_date_str}")
+                                f"vs {item['prev']} ({item['var']})\nCorte: {latest_date_str}")
 
         # Footer
         self._draw_footer(pdf, 1)
 
-        # ===================== PÁGINA 2 =====================
+        # ===================== PAGINA 2 =====================
         pdf.add_page()
 
         # Mini header
         content_y = self._draw_header(pdf, large=False)
 
-        # --- Sección 4: Tabla comparativa acumulada ---
+        # --- Seccion 4: Tabla comparativa acumulada ---
         content_y = self._draw_section_title(pdf, content_y, 4,
-                                             f"Comparativo Acumulado por Delito")
+                                             "Comparativo Acumulado por Delito")
 
-        headers_4 = ["Delito", "Últ. Dato", f"Acum. {self.prev_year}",
-                     f"Acum. {self.current_year}", "Dif.", "Var. %"]
+        headers_4 = ["Delito", "Ult. Dato", f"Acum. {prev_year}",
+                     f"Acum. {current_year}", "Dif.", "Var. %"]
         widths_4 = [45, 25, 28, 28, 27, 27]
         col_aligns_4 = ['L', 'C', 'C', 'C', 'C', 'C']
         rows_4 = []
         for r in indicadores:
             diff_str = f"{'+' if r['diff'] > 0 else ''}{r['diff']}"
-            rows_4.append([r['name'], self.latest_date_str, f"{r['prev']:,}", f"{r['current']:,}",
+            rows_4.append([r['name'], latest_date_str, f"{r['prev']:,}", f"{r['current']:,}",
                            diff_str, r['var']])
 
         content_y = self._draw_table(pdf, content_y, headers_4, rows_4, widths_4, col_aligns_4)
 
-        # --- Sección 5: Gráfica de evolución ---
+        # --- Seccion 5: Grafica de evolucion ---
         content_y = self._draw_section_title(pdf, content_y, 5, "Evolucion Temporal del Delito")
 
-        # Insertar gráfica
+        # Insertar grafica
         if chart_path and chart_path.exists():
-            # Calcular dimensiones manteniendo proporción
             img_w = 170
             pdf.image(str(chart_path), x=15, y=content_y, w=img_w)
-            content_y += 70  # altura aproximada de la gráfica
+            content_y += 70
 
         # Caja explicativa
         content_y += 5
-        expl = (f"Grafica comparativa: ano {self.current_year} (azul) vs ano "
-                f"{self.prev_year} (gris). Datos del Observatorio del Delito Valle "
-                f"para Jamundi.")
+        expl = (f"Grafica comparativa: ano {current_year} (azul) vs ano "
+                f"{prev_year} (gris). Datos del Observatorio del Delito Valle "
+                f"para {self.municipio}.")
         self._draw_info_box(pdf, content_y, expl)
 
         # Footer
@@ -688,15 +494,16 @@ class JamundiBoletinReporter:
 
 
 if __name__ == "__main__":
-    current_dir = Path(__file__).parent.parent.parent
-    csv = current_dir / "data" / "final" / "jamundi_analytics_master.csv"
-    output = current_dir / "data" / "final" / "boletin_semanal_jamundi.pdf"
-    escudo = current_dir / "assets" / "escudo_jamundi.png"
+    from src.core.config import settings
+
+    csv = settings.final_dir / "jamundi_analytics_master.csv"
+    output = settings.final_dir / "boletin_semanal_jamundi.pdf"
+    escudo = settings.base_dir / "assets" / "escudo_jamundi.png"
 
     if not csv.exists():
         print(f"ERROR: No se encontro el CSV en {csv}")
         exit(1)
 
-    reporter = JamundiBoletinReporter(csv, output, escudo)
+    reporter = BoletinReporter(csv, output, escudo, municipio=settings.obs_municipio)
     result = reporter.create_boletin()
     print(f"Boletin generado: {result}")

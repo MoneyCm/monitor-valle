@@ -1,3 +1,7 @@
+"""Scraper de la seccion /mis-reportes del portal del Observatorio.
+
+Descarga sistematicamente archivos PDF/XLSX de reportes historicos.
+"""
 import os
 import asyncio
 from pathlib import Path
@@ -8,7 +12,7 @@ from src.core.logging_config import logger
 from src.core.utils import save_json, normalize_text
 
 class ReportsScraper:
-    """Crawls /mis-reportes and systematically downloads all historical data files."""
+    """Navega /mis-reportes y descarga sistematicamente todos los archivos historicos."""
     
     def __init__(self, page: Page):
         self.page = page
@@ -16,60 +20,59 @@ class ReportsScraper:
         self.reports_metadata: List[Dict[str, Any]] = []
 
     async def _crawl_pages(self) -> List[str]:
-        """Navigate through the lists of reports and collect all specific report links."""
-        logger.info(f"Navigating to reports repository: {self.settings.obs_reports_url}")
+        """Navega las listas de reportes y recoge todos los enlaces especificos."""
+        logger.info(f"Navegando al repositorio de reportes: {self.settings.obs_reports_url}")
         
         await self.page.goto(self.settings.obs_reports_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("networkidle")
         
-        # Scrape all report links. Usually these are inside '.btn-ver-reporte' or similar.
+        # Extraer todos los enlaces de reportes
         report_links = await self.page.eval_on_selector_all(
             "a[href*='/mis-reportes/']", 
             "links => links.map(a => a.href)"
         )
         
-        # Remove duplicates
+        # Eliminar duplicados
         unique_links = list(set([l for l in report_links if '/mis-reportes/' in l and l != self.settings.obs_reports_url]))
-        logger.info(f"Found {len(unique_links)} unique report links.")
+        logger.info(f"Se encontraron {len(unique_links)} enlaces unicos de reportes.")
         return unique_links
 
     async def _download_files_from_report(self, report_url: str):
-        """Go to a report detail page and download all associated files (PDF, XLSX)."""
-        logger.debug(f"Exploring report: {report_url}")
+        """Visita una pagina de reporte y descarga todos los archivos asociados (PDF, XLSX)."""
+        logger.debug(f"Explorando reporte: {report_url}")
         await self.page.goto(report_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
         await self.page.wait_for_load_state("domcontentloaded")
         
-        # Extract title and date
+        # Extraer titulo y fecha
         try:
             title = await self.page.inner_text("h1")
             date_published = await self.page.inner_text(".fecha-publicacion") if await self.page.query_selector(".fecha-publicacion") else ""
-        except:
+        except Exception:
             title = f"Report_{report_url.split('/')[-1]}"
             date_published = ""
 
-        # Identify files for download
+        # Identificar archivos para descarga
         download_selectors = await self.page.query_selector_all("a[href*='/descargar']")
         
         for selector in download_selectors:
-            # We want to name files descriptively: Year_Month_Title.ext
+            # Nombrar archivos descriptivamente: Ano_Mes_Titulo.ext
             filename = await selector.get_attribute("title") or await selector.inner_text()
             
-            # Start download
+            # Iniciar descarga
             try:
-                # With Playwright, downloads are handled via 'expect_download'
                 async with self.page.expect_download() as download_info:
                     await selector.click()
                 
                 download_obj = await download_info.value
                 ext = Path(download_obj.suggested_filename).suffix
                 
-                # Custom name formatting
+                # Formato personalizado de nombre
                 safe_name = "".join([c if c.isalnum() else "_" for c in normalize_text(title)])
                 report_id = report_url.split("/")[-1]
                 save_path = self.settings.raw_dir / f"report_{report_id}_{safe_name}{ext}"
                 
                 await download_obj.save_as(save_path)
-                logger.info(f"Downloaded: {save_path.name}")
+                logger.info(f"Descargado: {save_path.name}")
                 
                 self.reports_metadata.append({
                     "title": title,
@@ -79,15 +82,15 @@ class ReportsScraper:
                     "original_filename": download_obj.suggested_filename
                 })
             except Exception as e:
-                logger.error(f"Failed to download file from {report_url}: {str(e)}")
+                logger.error(f"Fallo al descargar archivo desde {report_url}: {str(e)}")
 
     async def scrape_all_reports(self):
-        """Master crawl of the reports section."""
+        """Crawl maestro de la seccion de reportes."""
         links = await self._crawl_pages()
         for i, link in enumerate(links):
-            logger.info(f"Processing report {i+1}/{len(links)}...")
+            logger.info(f"Procesando reporte {i+1}/{len(links)}...")
             await self._download_files_from_report(link)
-            # Gentle wait to avoid rate limiting
+            # Espera corta para evitar rate limiting
             await asyncio.sleep(2)
         
         save_json(self.reports_metadata, self.settings.raw_dir / "reports_catalog.json")
