@@ -35,10 +35,11 @@ Adjunto a este correo comparto el boletin detallado en formato PDF para su revis
 
 Atentamente,
 
-Cesar Alfonso Forero Molano
-Profesional Universitario II
+Carolina Obando Gómez
 Secretaria de Seguridad y Convivencia
-Alcaldia Municipal de {municipio}""")
+Alcaldía Municipal de {municipio}
+
+Elaboró: Cesar Alfonso Forero Molano - Profesional Universitario II""")
 
     pdf_path = settings.final_dir / f"boletin_semanal_{municipio_slug}.pdf"
     if pdf_path.exists():

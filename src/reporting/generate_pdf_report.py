@@ -107,20 +107,24 @@ class BoletinReporter:
                  new_x="LMARGIN", new_y="NEXT")
 
         # --- Lado derecho: fuente + corte ---
-        right_w = 58
+        right_w = 68
         rx = page_w - margin - right_w
-        pdf.set_xy(rx, y_start + 1)
-        pdf.set_font("Helvetica", "B", 9 if large else 7)
+        pdf.set_xy(rx, y_start)
+        pdf.set_font("Helvetica", "B", 8 if large else 6.5)
         pdf.set_text_color(*self.COLOR_AZUL)
-        pdf.multi_cell(right_w, 4.5,
-                       self._safe("Observatorio del Delito Valle"),
-                       align="R")
+        
+        header_text = (
+            "Observatorio del Delito\n"
+            "Secretaría de Seguridad y Convivencia\n"
+            "Carolina Obando Gómez - Secretaria"
+        )
+        pdf.multi_cell(right_w, 3.5 if large else 2.6, self._safe(header_text), align="R")
 
-        pdf.set_xy(rx, y_start + (12 if large else 8))
-        pdf.set_font("Helvetica", "B", 7)
+        pdf.set_xy(rx, y_start + (13.5 if large else 8.5))
+        pdf.set_font("Helvetica", "B", 7 if large else 6)
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
         fecha_corte = datetime.datetime.now().strftime("%d/%m/%Y")
-        pdf.multi_cell(right_w, 4,
+        pdf.multi_cell(right_w, 3.5 if large else 2.8,
                        self._safe(f"Corte: {fecha_corte}\nMunicipio: {self.municipio}"),
                        align="R")
 
