@@ -187,16 +187,14 @@ class LookerStudioScraper:
                 
                 if await only_button.is_visible(timeout=3000):
                     logger.info("Click en 'Solamente' para filtrar estrictamente.")
-                    await only_button.click(force=True)
-                    # Limpiar bloques capturados ANTES de este clic (datos globales del Valle)
-                    await asyncio.sleep(5)
-                    logger.info("LIMPIEZA: Descartando bloques de datos globales previos...")
                     self.captured_responses.clear()
+                    await only_button.click(force=True)
+                    await asyncio.sleep(5)
                 else:
                     logger.info(f"Seleccionando opcion de {self.municipio} directamente (check/toggle).")
+                    self.captured_responses.clear()
                     await municipio_option.click(force=True)
                     await asyncio.sleep(5)
-                    self.captured_responses.clear()
                 
                 logger.success(f"Municipio {self.municipio} seleccionado.")
             else:
@@ -223,25 +221,15 @@ class LookerStudioScraper:
                 self.current_year_focus = year 
                 logger.info(f"Filtrando por Ano: {year}...")
                 
-                anio_trigger = looker_frame.locator('button.lego-control').filter(has_text=re.compile(r"ANO|Ano", re.I)).first
+                # Localizar el dropdown de año de forma robusta
+                anio_trigger = looker_frame.locator('div:has-text("ANO"), div:has-text("Año"), div:has-text("Year"), button.lego-control, .lego-control').filter(has_text=re.compile(r"ANO|Año|Year", re.I)).first
                 
-                if await anio_trigger.is_visible(timeout=10000):
-                    await anio_trigger.hover()
-                    await asyncio.sleep(1)
-                    await anio_trigger.click(force=True, timeout=10000)
-                else:
-                    logger.warning(f"Boton 'ANO' no visible directamente para ano {year}, intentando click generico...")
-                    target = looker_frame.get_by_text("ANO", exact=False).first
-                    await target.hover()
-                    await target.click(force=True, timeout=10000)
-                
+                await anio_trigger.hover()
+                await asyncio.sleep(1)
+                await anio_trigger.click(force=True)
                 await asyncio.sleep(4)
                 
-                logger.info(f"Aplicando filtro robusto para ano: {year}")
-                
-                # Click JS para evitar overlays
-                await anio_trigger.evaluate("el => el.dispatchEvent(new MouseEvent('click', {bubbles: true}))")
-                await asyncio.sleep(3)
+                logger.info(f"Dropdown de ano abierto para: {year}")
                 
                 # Buscar ano
                 search_box_year = looker_frame.locator('input[placeholder*="Buscar"], input[placeholder*="Search"], input[type="text"]').first
