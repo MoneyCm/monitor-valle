@@ -375,16 +375,16 @@ class BoletinReporter:
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(*self.COLOR_TEXTO)
         intro = (f"El presente boletin presenta el analisis estadistico de los principales "
-                 f"delitos del municipio de {self.municipio} para el ano {current_year}, "
-                 f"comparado con el ano {prev_year}. Los datos fueron obtenidos "
+                 f"delitos del municipio de {self.municipio} para el año {current_year}, "
+                 f"comparado con el año {prev_year}. Los datos fueron obtenidos "
                  f"directamente del Observatorio del Delito Valle.")
         pdf.multi_cell(180, 5, self._safe(intro), align="J")
         content_y = pdf.get_y() + 3
 
         # Caja de informacion
         info = ("Lectura correcta: el Panorama General corresponde al acumulado "
-                f"del ano {current_year} hasta la fecha de corte, "
-                f"frente al mismo periodo del ano {prev_year}. "
+                f"del año {current_year} hasta la fecha de corte, "
+                f"frente al mismo periodo del año {prev_year}. "
                 f"Fuente: Observatorio del Delito Valle.")
         content_y = self._draw_info_box(pdf, content_y, info)
 
@@ -395,8 +395,8 @@ class BoletinReporter:
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(*self.COLOR_GRIS_TEXTO)
         pdf.multi_cell(180, 4,
-                       self._safe(f"Periodo acumulado comparado: ano {current_year} "
-                                  f"frente al ano {prev_year}."),
+                       self._safe(f"Periodo acumulado comparado: año {current_year} "
+                                  f"frente al año {prev_year}."),
                        align="L")
         content_y = pdf.get_y() + 3
 
@@ -471,7 +471,7 @@ class BoletinReporter:
 
         # Caja explicativa
         content_y += 5
-        expl = (f"Grafica comparativa: ano {current_year} (azul) vs ano "
+        expl = (f"Grafica comparativa: año {current_year} (azul) vs año "
                 f"{prev_year} (gris). Datos del Observatorio del Delito Valle "
                 f"para {self.municipio}.")
         self._draw_info_box(pdf, content_y, expl)

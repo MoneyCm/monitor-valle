@@ -29,7 +29,7 @@ def send_report_email():
     
     msg.set_content(f"""Cordial saludo,
 
-Les informo que se ha detectado una nueva actualizacion de datos en el Observatorio del Delito Valle. Con base en esta informacion, se ha generado el Boletin Estadistico de Seguridad y Convivencia para el municipio de {municipio}, comparando el acumulado del ano actual frente al mismo periodo del ano anterior.
+Les informo que se ha detectado una nueva actualizacion de datos en el Observatorio del Delito Valle. Con base en esta informacion, se ha generado el Boletin Estadistico de Seguridad y Convivencia para el municipio de {municipio}, comparando el acumulado del año actual frente al mismo periodo del año anterior.
 
 Adjunto a este correo comparto el boletin detallado en formato PDF para su revision.
 

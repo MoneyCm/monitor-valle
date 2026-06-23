@@ -15,10 +15,10 @@ class DataAnalyzer:
 
     DELITOS = [
         "Homicidio", "Lesiones Personales", "Hurto Personas", "Hurto Motocicletas",
-        "Hurto Automotores", "Extorsion", "Violencia Intrafamiliar",
+        "Hurto Automotores", "Extorsión", "Violencia Intrafamiliar",
         "Hurto Entidades Comerciales", "Hurto Residencias",
         "Acceso Carnal O Acto Sexual Violento",
-        "Actos Sexuales Con Menor De 14 Anos",
+        "Actos Sexuales Con Menor De 14 Años",
         "Secuestro",
     ]
 
