@@ -141,8 +141,8 @@ class ConsolidationPipeline:
         df_looker = self._normalize_looker_data()
         
         if df_looker.empty:
-            logger.error("No se encontraron datos para consolidar.")
-            return {"error": "Dataset vacio"}
+            raise RuntimeError("No se encontraron datos para consolidar (dataset vacio).")
+
 
         # Validacion (advierte pero puede no interrumpir si es API)
         try:

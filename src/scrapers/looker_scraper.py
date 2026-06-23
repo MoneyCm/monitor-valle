@@ -142,7 +142,7 @@ class LookerStudioScraper:
             await self.page.wait_for_load_state("load", timeout=60000)
             looker_frame = self.page.frame_locator('iframe[src*="lookerstudio.google.com"]')
             # Esperar a que los controles del iframe esten visibles
-            looker_frame.locator('.lego-control').first.wait_for(state="visible", timeout=30000)
+            await looker_frame.locator('.lego-control').first.wait_for(state="visible", timeout=30000)
             logger.info("Looker Studio inicializado correctamente.")
             await asyncio.sleep(5)
         except Exception:
@@ -208,9 +208,11 @@ class LookerStudioScraper:
             await self.page.keyboard.press("Escape")
             await asyncio.sleep(2)
 
-        # Esperar a que se capturen todos los bloques filtrados
-        logger.info("Esperando 15s para asegurar captura de bloques filtrados...")
-        await asyncio.sleep(15)
+        # Esperar a que se capturen todos los bloques filtrados.
+        # IMPORTANTE: No limpiar captured_responses aqui; el parser se encarga de filtrar.
+        # Looker Studio necesita tiempo (~30s) para recargar los datos tras aplicar el filtro.
+        logger.info("Esperando 30s para asegurar captura de todos los bloques filtrados...")
+        await asyncio.sleep(30)
         
         # 4. Seleccion secuencial de anos para desgloses detallados
         years_to_capture = ["2024", "2025", "2026"]
@@ -263,8 +265,8 @@ class LookerStudioScraper:
                 else:
                     logger.warning(f"Opcion de ano {year} no encontrada en dropdown")
                 
-                logger.info(f"Esperando 15s para refresh de datos de {year}...")
-                await asyncio.sleep(15)
+                logger.info(f"Esperando 25s para refresh de datos de {year}...")
+                await asyncio.sleep(25)
                 
                 logger.success(f"Secuencia de datos capturada para {year}")
                 await self.page.keyboard.press("Escape")
