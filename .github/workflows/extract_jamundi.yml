@@ -2,13 +2,8 @@ name: "Jamundí Data Extraction"
 
 on:
   schedule:
-    # Run every day at 8:00 AM UTC
-    - cron: '0 8 * * *'
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - ".github/workflows/extract_jamundi.yml"
+    # Contexto regional semanal: lunes, 07:41 America/Bogota.
+    - cron: '41 12 * * 1'
   workflow_dispatch:
     # Allow manual triggers
     inputs:
@@ -20,6 +15,10 @@ on:
 jobs:
   extract:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    concurrency:
+      group: monitor-observatorio-valle
+      cancel-in-progress: false
     permissions:
       contents: write
       id-token: write
@@ -76,6 +75,10 @@ jobs:
         run: |
           python -m src.reporting.send_email
 
+      - name: Registrar revision sin cambios
+        if: env.DATA_CHANGED != 'true'
+        run: echo "Sin cambios estadisticos; no se genero PDF ni se envio correo."
+
       - name: Commit New Data Hash
         if: env.DATA_CHANGED == 'true'
         run: |
@@ -87,6 +90,7 @@ jobs:
           git push
 
       - name: Upload Extracted Data
+        if: env.DATA_CHANGED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: jamundi-extracted-data
