@@ -55,3 +55,15 @@ Los datos se guardan en la carpeta `data/`:
 
 ## 📝 Mantenimiento
 Si la interfaz del portal cambia (selectores de login o rutas de menú), actualiza los selectores en `src/scrapers/auth.py` y `src/scrapers/discovery.py`.
+# Integracion con el SISC
+
+El workflow diario informa al Centro de fuentes del SISC el estado de la
+extraccion, el corte estadistico calculado por el mismo analizador del boletin,
+la cobertura y el numero de indicadores disponibles.
+
+GitHub Actions se autentica automaticamente mediante OIDC y no necesita una
+clave permanente. El backend acepta un token breve solo cuando procede de este
+repositorio, este workflow, la rama principal y un evento autorizado.
+`SISC_SOURCE_MONITOR_KEY` queda como respaldo para ejecuciones fuera de GitHub.
+El heartbeat es tolerante a fallos: una indisponibilidad del SISC no detiene la
+extraccion del Observatorio.
