@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -204,7 +205,7 @@ def send_heartbeat(
     api_url: Optional[str] = None,
     service_key: Optional[str] = None,
     oidc_token: Optional[str] = None,
-    timeout: int = 20,
+    timeout: int = 60,
 ) -> bool:
     token = _request_github_oidc_token() if oidc_token is None else oidc_token.strip()
     key = (service_key if service_key is not None else os.getenv("SISC_SOURCE_MONITOR_KEY", "")).strip()
@@ -227,15 +228,20 @@ def send_heartbeat(
         headers=headers,
         method="POST",
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            accepted = 200 <= response.status < 300
-        print(f"[INFO] Heartbeat SISC enviado ({payload['status']}).")
-        return accepted
-    except HTTPError as error:
-        print(f"[AVISO] El API SISC rechazo el heartbeat (HTTP {error.code}).")
-    except (URLError, TimeoutError, OSError) as error:
-        print(f"[AVISO] No se pudo enviar el heartbeat SISC: {error}.")
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                accepted = 200 <= response.status < 300
+            print(f"[INFO] Heartbeat SISC enviado ({payload['status']}).")
+            return accepted
+        except HTTPError as error:
+            print(f"[AVISO] El API SISC rechazo el heartbeat (HTTP {error.code}).")
+            if error.code not in {408, 429, 500, 502, 503, 504}:
+                return False
+        except (URLError, TimeoutError, OSError):
+            print(f"[AVISO] Fallo temporal de entrega SISC; intento {attempt + 1}/3.")
+        if attempt < 2:
+            time.sleep(2 ** (attempt + 1))
     return False
 
 
@@ -244,6 +250,9 @@ def main() -> int:
     payload = build_payload(
         outcome=os.getenv("SISC_MONITOR_OUTCOME", "success"),
         data_changed=changed,
+    )
+    Path("sisc-heartbeat.json").write_text(
+        json.dumps(payload, ensure_ascii=True), encoding="utf-8"
     )
     print(
         "[INFO] Estado para Centro de fuentes: "
