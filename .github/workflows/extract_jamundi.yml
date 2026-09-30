@@ -2,8 +2,10 @@ name: "Jamundí Data Extraction"
 
 on:
   schedule:
-    # Contexto regional semanal: lunes, 07:41 America/Bogota.
-    - cron: '41 12 * * 1'
+    # Contexto regional: lunes y jueves, 07:41 America/Bogota. El Observatorio no publica en un
+    # dia fijo; con una sola revision semanal el SISC mostraba "con rezago" varios dias sin motivo.
+    # Solo se envia correo cuando hay datos nuevos (DATA_CHANGED).
+    - cron: '41 12 * * 1,4'
   workflow_dispatch:
     # Allow manual triggers
     inputs:
