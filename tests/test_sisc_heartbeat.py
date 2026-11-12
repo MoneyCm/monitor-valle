@@ -78,3 +78,37 @@ def test_oidc_identity_is_sent_as_bearer_token():
     assert sent is True
     assert request.get_header("Authorization") == "Bearer short-lived-token"
     assert request.get_header("X-sisc-source-key") is None
+
+
+def _http_error(code):
+    from urllib.error import HTTPError
+
+    return HTTPError("https://example.test", code, "error", {}, None)
+
+
+def test_suspended_cloud_sisc_is_reported_as_unavailable_not_failure(tmp_path, monkeypatch):
+    import src.integrations.sisc_heartbeat as heartbeat
+
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch.object(heartbeat, "urlopen", side_effect=_http_error(503)) as send,
+        patch.object(heartbeat.time, "sleep"),
+        patch.object(heartbeat, "_request_github_oidc_token", return_value="token"),
+        patch.object(heartbeat, "build_payload", return_value={"status": "CURRENT", "quality_status": "VALIDATED", "indicator_count": 12}),
+    ):
+        assert heartbeat.deliver_heartbeat({"status": "CURRENT"}, oidc_token="token") == heartbeat.UNAVAILABLE
+        assert heartbeat.main() == 0
+    assert send.call_count == 6
+    assert (tmp_path / "sisc-heartbeat.json").exists()
+
+
+def test_authorization_rejection_still_fails_the_step(tmp_path, monkeypatch):
+    import src.integrations.sisc_heartbeat as heartbeat
+
+    monkeypatch.chdir(tmp_path)
+    with (
+        patch.object(heartbeat, "urlopen", side_effect=_http_error(403)),
+        patch.object(heartbeat, "_request_github_oidc_token", return_value="token"),
+        patch.object(heartbeat, "build_payload", return_value={"status": "CURRENT", "quality_status": "VALIDATED", "indicator_count": 12}),
+    ):
+        assert heartbeat.main() == 1

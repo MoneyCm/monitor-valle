@@ -67,3 +67,6 @@ repositorio, este workflow, la rama principal y un evento autorizado.
 `SISC_SOURCE_MONITOR_KEY` queda como respaldo para ejecuciones fuera de GitHub.
 El heartbeat es tolerante a fallos: una indisponibilidad del SISC no detiene la
 extraccion del Observatorio.
+Si el SISC en la nube esta apagado o suspendido (HTTP 502/503/504 o sin conexion),
+el paso termina sin error y el reporte queda en el artefacto `sisc-heartbeat` para
+la sincronizacion local. Solo un rechazo real (por ejemplo 401/403/404) marca el paso como fallido.

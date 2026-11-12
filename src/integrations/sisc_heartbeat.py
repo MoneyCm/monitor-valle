@@ -199,19 +199,25 @@ def _request_github_oidc_token(audience: str = "sisc-source-center") -> Optional
         return None
 
 
-def send_heartbeat(
+TRANSIENT_HTTP_CODES = {408, 429, 500, 502, 503, 504}
+# Resultados de entrega: SENT (aceptado), UNAVAILABLE (el SISC en la nube no responde o
+# esta suspendido), REJECTED (el SISC respondio y nego el reporte) y SKIPPED (sin identidad).
+SENT, UNAVAILABLE, REJECTED, SKIPPED = "SENT", "UNAVAILABLE", "REJECTED", "SKIPPED"
+
+
+def deliver_heartbeat(
     payload: Dict[str, Any],
     *,
     api_url: Optional[str] = None,
     service_key: Optional[str] = None,
     oidc_token: Optional[str] = None,
     timeout: int = 60,
-) -> bool:
+) -> str:
     token = _request_github_oidc_token() if oidc_token is None else oidc_token.strip()
     key = (service_key if service_key is not None else os.getenv("SISC_SOURCE_MONITOR_KEY", "")).strip()
     if not token and not key:
         print("[AVISO] Heartbeat SISC omitido: no hay identidad OIDC ni clave de servicio.")
-        return False
+        return SKIPPED
 
     endpoint = _heartbeat_url(api_url or os.getenv("SISC_API_URL", DEFAULT_API_URL))
     headers = {
@@ -228,21 +234,34 @@ def send_heartbeat(
         headers=headers,
         method="POST",
     )
+    last_problem = ""
     for attempt in range(3):
         try:
             with urlopen(request, timeout=timeout) as response:
                 accepted = 200 <= response.status < 300
-            print(f"[INFO] Heartbeat SISC enviado ({payload['status']}).")
-            return accepted
+            if accepted:
+                print(f"[INFO] Heartbeat SISC enviado ({payload['status']}).")
+                return SENT
+            print(f"[AVISO] El API SISC respondio HTTP {response.status} al heartbeat.")
+            return REJECTED
         except HTTPError as error:
-            print(f"[AVISO] El API SISC rechazo el heartbeat (HTTP {error.code}).")
-            if error.code not in {408, 429, 500, 502, 503, 504}:
-                return False
-        except (URLError, TimeoutError, OSError):
-            print(f"[AVISO] Fallo temporal de entrega SISC; intento {attempt + 1}/3.")
+            if error.code not in TRANSIENT_HTTP_CODES:
+                print(f"[AVISO] El API SISC rechazo el heartbeat (HTTP {error.code}).")
+                return REJECTED
+            last_problem = f"HTTP {error.code}"
+        except (URLError, TimeoutError, OSError) as error:
+            last_problem = type(error).__name__
         if attempt < 2:
             time.sleep(2 ** (attempt + 1))
-    return False
+    print(
+        f"[INFO] SISC en la nube no disponible ({last_problem} tras 3 intentos); "
+        "el reporte queda guardado en sisc-heartbeat.json para la sincronizacion local."
+    )
+    return UNAVAILABLE
+
+
+def send_heartbeat(payload: Dict[str, Any], **kwargs: Any) -> bool:
+    return deliver_heartbeat(payload, **kwargs) == SENT
 
 
 def main() -> int:
@@ -259,7 +278,10 @@ def main() -> int:
         f"{payload['status']} / {payload['quality_status']} / "
         f"{payload['indicator_count']} indicadores."
     )
-    return 0 if send_heartbeat(payload) else 1
+    result = deliver_heartbeat(payload)
+    # Un SISC en la nube apagado o suspendido no es un fallo del monitor: el artefacto
+    # sisc-heartbeat se carga despues con la sincronizacion local.
+    return 0 if result in {SENT, UNAVAILABLE} else 1
 
 
 if __name__ == "__main__":

@@ -22,3 +22,14 @@ class DeliveryTests(unittest.TestCase):
         with patch.object(heartbeat, "urlopen", side_effect=TimeoutError()) as send, patch.object(heartbeat.time, "sleep"):
             self.assertFalse(heartbeat.send_heartbeat({"status": "CURRENT"}, oidc_token="test"))
             self.assertEqual(send.call_count, 3)
+
+    def test_suspended_cloud_sisc_is_unavailable_not_rejected(self):
+        error = HTTPError("https://example.test", 503, "suspended", {}, None)
+        with patch.object(heartbeat, "urlopen", side_effect=error) as send, patch.object(heartbeat.time, "sleep"):
+            self.assertEqual(heartbeat.deliver_heartbeat({"status": "CURRENT"}, oidc_token="test"), heartbeat.UNAVAILABLE)
+            self.assertEqual(send.call_count, 3)
+
+    def test_authorization_error_is_rejected(self):
+        error = HTTPError("https://example.test", 403, "denied", {}, None)
+        with patch.object(heartbeat, "urlopen", side_effect=error):
+            self.assertEqual(heartbeat.deliver_heartbeat({"status": "CURRENT"}, oidc_token="test"), heartbeat.REJECTED)
