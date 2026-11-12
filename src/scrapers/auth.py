@@ -3,6 +3,7 @@
 Maneja login, sesion y cookies usando Playwright con reintentos automaticos.
 """
 from typing import Optional
+from urllib.parse import urlsplit
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from src.core.config import settings
 from src.core.logging_config import logger
@@ -50,7 +51,7 @@ class AuthManager:
             stage = "pulsar el boton de login"
             await self.page.get_by_role("button", name="Iniciar sesión", exact=True).click()
             stage = "esperar la redireccion despues del login"
-            await self.page.wait_for_url(lambda url: "/login" not in url.path, timeout=self.settings.obs_timeout)
+            await self.page.wait_for_url(lambda url: urlsplit(url).path.rstrip("/") != "/login", timeout=self.settings.obs_timeout)
             if "/login" not in self.page.url:
                  logger.info(f"Login exitoso! Redirigido a: {self.page.url}")
                  return self.page
