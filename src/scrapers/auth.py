@@ -2,10 +2,8 @@
 
 Maneja login, sesion y cookies usando Playwright con reintentos automaticos.
 """
-import os
-import asyncio
 from typing import Optional
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page, expect
+from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from src.core.config import settings
 from src.core.logging_config import logger
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -29,7 +27,8 @@ class AuthManager:
         
         # Si no se proporciona instancia de playwright, crear una
         if playwright_manager is None:
-            self._pw = await async_playwright().start()
+            if not getattr(self, '_pw', None):
+                self._pw = await async_playwright().start()
             playwright_manager = self._pw
             
         self.browser = await playwright_manager.chromium.launch(
@@ -40,31 +39,27 @@ class AuthManager:
         )
         self.page = await self.context.new_page()
         
-        logger.info(f"Intentando login en {self.settings.obs_login_url}")
-        await self.page.goto(self.settings.obs_login_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
-        # Completar credenciales
-        await self.page.fill("#email", self.settings.obs_user)
-        await self.page.fill("#password", self.settings.obs_password)
-        
-        # Click en boton de login
-        await self.page.click(".btn-enviar-login")
-        
-        # Verificar exito (navegacion o visibilidad del dashboard)
+        stage = "abrir la pagina de login"
         try:
-            await self.page.wait_for_load_state("networkidle")
+            logger.info(f"Intentando login en {self.settings.obs_login_url}")
+            await self.page.goto(self.settings.obs_login_url, timeout=self.settings.obs_timeout, wait_until="domcontentloaded")
+            stage = "encontrar el campo de correo"
+            await self.page.fill("#email", self.settings.obs_user)
+            stage = "encontrar el campo de contrasena"
+            await self.page.fill("#password", self.settings.obs_password)
+            stage = "pulsar el boton de login"
+            await self.page.get_by_role("button", name="Iniciar sesión", exact=True).click()
+            stage = "esperar la redireccion despues del login"
+            await self.page.wait_for_url(lambda url: "/login" not in url.path, timeout=self.settings.obs_timeout)
             if "/login" not in self.page.url:
                  logger.info(f"Login exitoso! Redirigido a: {self.page.url}")
                  return self.page
-            else:
-                logger.error("Aun en pagina de login. Verificando mensajes de error...")
-                content = await self.page.content()
-                if "credenciales" in content.lower():
-                     raise Exception("Credenciales invalidas.")
-                raise Exception("Login fallido. No se produjo la navegacion esperada.")
+            raise RuntimeError("Login fallido. No se produjo la navegacion esperada.")
         except Exception as e:
-            # Captura de pantalla para depuracion en caso de fallo
-            await self.page.screenshot(path=str(self.settings.logs_dir / f"login_error_{os.getpid()}.png"))
-            logger.error(f"Detalle del error de login: {str(e)}")
+            # No guardar capturas ni contenido: pueden contener credenciales o datos privados.
+            logger.error(f"Login fallo al {stage}: {type(e).__name__}: {str(e)}")
+            await self.browser.close()
+            self.browser = self.context = self.page = None
             raise
 
     async def get_auth_headers(self) -> dict:
@@ -79,5 +74,8 @@ class AuthManager:
         """Libera recursos del navegador."""
         if self.browser:
             await self.browser.close()
+            self.browser = self.context = self.page = None
         if hasattr(self, '_pw') and self._pw:
             await self._pw.stop()
+            self._pw = None
+
